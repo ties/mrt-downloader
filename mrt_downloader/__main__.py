@@ -11,7 +11,7 @@ from typing import Optional
 
 import click
 
-from mrt_downloader.download import main_process
+from mrt_downloader.download import download_files
 
 LOG = logging.getLogger(__name__)  #
 logging.basicConfig(level=logging.INFO)
@@ -91,7 +91,7 @@ def main(
         )
     )
     asyncio.run(
-        main_process(
+        download_files(
             target_dir,
             start_time,
             end_time,

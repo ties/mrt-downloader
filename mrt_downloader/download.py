@@ -112,7 +112,7 @@ class RisArchiveLinkParser(HTMLParser):
                     self.links.append(attr[1])
 
 
-async def main_process(
+async def download_files(
     target_dir: Path,
     start_time: datetime.datetime,
     end_time: datetime.datetime,

@@ -4,7 +4,7 @@ import pathlib
 
 import pytest  # type: ignore
 
-from mrt_downloader.download import main_process
+from mrt_downloader.download import download_files
 
 
 @pytest.mark.asyncio
@@ -18,7 +18,7 @@ async def test_mrt_download(tmp_path: pathlib.Path) -> None:
     print(f"Download window: {yesterday_midnight} - {yesterday_one_am}")
 
     # download from two RRCs..
-    await main_process(
+    await download_files(
         tmp_path,
         yesterday_midnight,
         yesterday_one_am,
