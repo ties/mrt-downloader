@@ -8,7 +8,7 @@ readme = "README.md"
 packages = [{include = "mrt_downloader"}]
 
 [project.scripts]
-mrt-downloader = "mrt_downloader"
+mrt-downloader = "mrt_downloader.cli:cli"
 
 [tool.poetry.dependencies]
 aiohttp = "^3.11.11"
