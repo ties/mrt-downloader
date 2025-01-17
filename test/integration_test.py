@@ -1,9 +1,8 @@
 import datetime
 import multiprocessing
 import pathlib
-import re
 
-import pytest
+import pytest  # type: ignore
 
 from mrt_downloader.download import main_process
 
@@ -11,13 +10,21 @@ from mrt_downloader.download import main_process
 @pytest.mark.asyncio
 async def test_mrt_download(tmp_path: pathlib.Path) -> None:
     # Download a limited number of files
-    yesterday_midnight = (datetime.datetime.now() - datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday_midnight = (datetime.datetime.now() - datetime.timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
     yesterday_one_am = yesterday_midnight.replace(hour=1)
 
     print(f"Download window: {yesterday_midnight} - {yesterday_one_am}")
 
     # download from two RRCs..
-    await main_process(tmp_path, yesterday_midnight, yesterday_one_am, rrc=[4, 11], num_workers=multiprocessing.cpu_count())
+    await main_process(
+        tmp_path,
+        yesterday_midnight,
+        yesterday_one_am,
+        rrc=[4, 11],
+        num_workers=multiprocessing.cpu_count(),
+    )
 
     files = list(tmp_path.iterdir())
     # there should be 2x13 (updates - beginning and end are inclusive) + 2 files (bviews)
@@ -30,4 +37,3 @@ async def test_mrt_download(tmp_path: pathlib.Path) -> None:
 
     assert len(bview_files) == 2
     assert len(update_files) == 26
-

@@ -1,17 +1,53 @@
 [project]
 name = "mrt-downloader"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.0.1"
+description = ""
+authors = [{name="Ties de Kock", email="ties@tiesdekock.nl"}]
+requires-python = ">=3.11"
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = [
-    "aiohttp>=3.11.11",
-    "click>=8.1.8",
-    "tqdm>=4.67.1",
-]
+packages = [{include = "mrt_downloader"}]
 
-[dependency-groups]
-dev = [
-    "pytest>=8.3.4",
-    "pytest-asyncio>=0.25.2",
-]
+[project.scripts]
+rrdp-tools = "mrt_downloader:main"
+
+[tool.poetry.dependencies]
+aiohttp = "^3.11.11"
+click = "^8.1.8"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.4"
+pytest-asyncio = "^0.25.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+target-version = ["py311"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+line_length = 88
+profile = "black"
+
+[tool.ruff]
+lint.ignore = ["E501"]
+
+[tool.pytest]
+junit_family = "xunit2"
+
+[settings]
+# known_third_party = []
