@@ -45,7 +45,7 @@ BVIEW_DATE_TYPE = click.DateTime(
     default=multiprocessing.cpu_count(),
     help="Number of download worker threads",
 )
-def main(
+def cli(
     target_dir: Path,
     create_target: bool,
     start_time: datetime.datetime,
@@ -104,4 +104,4 @@ def main(
 
 
 if __name__ == "__main__":
-    main()
+    cli()
