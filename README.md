@@ -1,7 +1,9 @@
 # Download MRT updates
 
-Download MRT updates. Just form RIPE RIS for now.
+Download MRT updates. Just from RIPE RIS for now.
 
 ```
-uv run python -m ris_support.download_update 2024-11-19T00:55 2024-11-19T01:10
+mkdir mrt
+# download a day's MRT files into the mrt directory.
+poetry run python -m mrt_downloader mrt 2025-01-16T00:50 2025-01-17T00:00
 ```
