@@ -50,4 +50,9 @@ lint.ignore = ["E501"]
 junit_family = "xunit2"
 
 [settings]
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+]
 # known_third_party = []
