@@ -120,6 +120,7 @@ async def download_files(
     bview_only: bool = False,
     update_only: bool = False,
     rrc: Optional[List[str]] = None,
+    partition_directories: bool = False,
 ):
     """Gather the list of update files per timestamp per rrc and download them."""
     matches = []
@@ -150,10 +151,14 @@ async def download_files(
     queue = asyncio.Queue()
 
     for file in matches:
+        target_base_dir = target_dir
+        if partition_directories:
+            target_base_dir = target_base_dir / file.date.strftime("%d/%H/")
+            target_base_dir.mkdir(parents=True, exist_ok=True)
+
         # path name is prefixed with rrc to cluster files from the same rrc.
-        await queue.put(
-            Download(file.url, target_dir / f"rrc{file.rrc:02}-{file.file_name}")
-        )
+        target_path = target_base_dir / f"rrc{file.rrc:02}-{file.file_name}"
+        await queue.put(Download(file.url, target_path))
 
     click.echo(
         click.style(

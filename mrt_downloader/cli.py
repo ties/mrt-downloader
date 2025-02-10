@@ -25,13 +25,19 @@ BVIEW_DATE_TYPE = click.DateTime(
 @click.command()
 @click.argument(
     "target_dir",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    type=click.Path(exists=False, file_okay=False, path_type=Path),
     default=Path.cwd() / "mrt",
 )
 @click.argument("start-time", type=BVIEW_DATE_TYPE)
 @click.argument("end-time", type=BVIEW_DATE_TYPE)
 @click.option(
     "--create-target", is_flag=True, default=False, help="Create target directory"
+)
+@click.option(
+    "--partition-directories",
+    is_flag=True,
+    default=False,
+    help="Partition directories by [year]/[month]/[day]/[hour]",
 )
 @click.option("--verbose", is_flag=True, help="Enable verbose logging")
 @click.option("--bview-only", is_flag=True, help="Download bview files only")
@@ -55,6 +61,7 @@ def cli(
     update_only: bool,
     num_threads: int,
     rrc: Optional[str],
+    partition_directories: bool,
 ):
     """
     Download a set of BGP updates from RIS.
@@ -99,6 +106,7 @@ def cli(
             update_only=update_only,
             rrc=rrc,
             num_workers=num_threads,
+            partition_directories=partition_directories,
         )
     )
 
