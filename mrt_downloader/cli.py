@@ -28,12 +28,8 @@ BVIEW_DATE_TYPE = click.DateTime(
     type=click.Path(exists=False, file_okay=False, path_type=Path),
     default=Path.cwd() / "mrt",
 )
-@click.argument(
-    "start-time", type=BVIEW_DATE_TYPE, hel="Start time of time window (inclusive)"
-)
-@click.argument(
-    "end-time", type=BVIEW_DATE_TYPE, help="End time of time window (exclusive)"
-)
+@click.argument("start-time", type=BVIEW_DATE_TYPE)
+@click.argument("end-time", type=BVIEW_DATE_TYPE)
 @click.option(
     "--create-target", is_flag=True, default=False, help="Create target directory"
 )
