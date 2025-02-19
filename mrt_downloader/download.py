@@ -52,7 +52,16 @@ def round_to_five(then: datetime.datetime, up=False) -> datetime.datetime:
 def index_files_for_rrcs(
     rrcs: Iterable[int], start_time: datetime.datetime, end_time: datetime.datetime
 ) -> List[str]:
-    """Gather the index URLs for the RRCs given."""
+    """Gather the index URLs for the RRCs given.
+
+    Args:
+        rrcs: List of RRC collector IDs
+        start_time: Start time for gathering index files (inclusive)
+        end_time: End time for gathering index files (exclusive)
+
+    Returns:
+        List of URLs to RRC index files
+    """
     # align to first day of the month at 00:00
     start_time = start_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     index_urls = []
@@ -82,7 +91,7 @@ async def process_rrc_index(
         if response.status != 200:
             click.echo(f"Skipping {entry.url} due to HTTP error {response.status}")
         else:
-            parser = RisArchiveLinkParser()
+            parser = AnchorTagParser()
             parser.feed(await response.text())
 
             for link in parser.links:
@@ -97,18 +106,22 @@ async def process_rrc_index(
     return result
 
 
-class RisArchiveLinkParser(HTMLParser):
+class AnchorTagParser(HTMLParser):
     """Parse out the A tags"""
 
-    def __init__(self):
+    extension: str
+    links: List[str]
+
+    def __init__(self, extension: str = ".gz"):
         super().__init__()
+        self.extension = extension
         self.links = []
 
     def handle_starttag(self, tag, attrs):
         """Handle open tags."""
         if tag == "a":
             for attr in attrs:
-                if attr[0] == "href" and attr[1].endswith(".gz"):
+                if attr[0] == "href" and attr[1].endswith(self.extension):
                     self.links.append(attr[1])
 
 
