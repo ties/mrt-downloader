@@ -1,6 +1,6 @@
 [project]
 name = "mrt-downloader"
-version = "0.0.1"
+version = "0.0.2"
 description = ""
 authors = [{name="Ties de Kock", email="ties@tiesdekock.nl"}]
 requires-python = ">=3.11"

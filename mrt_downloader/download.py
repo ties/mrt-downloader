@@ -185,5 +185,14 @@ async def download_files(
         statuses = await asyncio.gather(*workers)
         await queue.join()
 
-        for status in statuses:
-            click.echo(click.style(f"Downloaded {status} files"))
+        total_files = 0
+
+        for status_count in statuses:
+            total_files += status_count
+            click.echo(click.style(f"Downloaded {status_count} files"))
+
+        click.echo(
+            click.style(
+                f"Downloaded {total_files} files to {str(target_dir)}", fg="green"
+            )
+        )
