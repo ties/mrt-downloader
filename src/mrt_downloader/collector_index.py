@@ -1,57 +1,118 @@
+
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from typing import AsyncGenerator
+import datetime
+from html.parser import HTMLParser
+from typing import Iterable
 
 import aiohttp
+import click
+import urllib
+
+
+BASE_URL_TEMPLATE = "https://data.ris.ripe.net/rrc{rrc:02}/{year:04}.{month:02}/"
 
 
 @dataclass
-class CollectorInfo:
-    collector_name: str
-    project: str
-    base_url: str
-    installed: datetime
-    removed: datetime | None = None
+class RrcIndexEntry:
+    rrc: int
+    url: str
 
 
-async def get_ripe_ris_collectors(session: aiohttp.ClientSession) -> AsyncGenerator[CollectorInfo]:
+@dataclass
+class RisFileEntry:
+    rrc: int
+    file_name: str
+    url: str
+
+    @property
+    def date(self) -> datetime.datetime | None:
+        """Extract the date from the file name."""
+        try:
+            date_tokens = ".".join(self.file_name.split(".")[-3:-1])
+            return datetime.datetime.strptime(date_tokens, "%Y%m%d.%H%M")
+        except ValueError:
+            return None
+
+
+def round_to_five(then: datetime.datetime, up=False) -> datetime.datetime:
     """
-    Get the list of RIPE RIS collectors.
+    Round a datetime object to the nearest 5 minutes.
     """
-    async with session.get("https://stat.ripe.net/data/rrc-info/data.json", raise_for_status=True) as resp:
-        data = await resp.json()
+    minutes = 5 * ((then.minute // 5) + (up and 1 or 0))
+    return then.replace(minute=minutes, second=0, microsecond=0)
 
-        rrcs = data["data"]["rrcs"]
-        for rrc in rrcs:
-            if rrc.get("deactivated_on", None):
-                deactivated = datetime.strptime(rrc["deactivated_on"], "%Y-%m").replace(day=1, tzinfo=UTC)
-                # Make sure we capture the final day of the month
-                deactivated = (deactivated + timedelta(days=32)).replace(day=1)
-            else:
-                deactivated = None
 
-            yield CollectorInfo(
-                collector_name=rrc["name"],
-                project="RIS",
-                base_url=f"https://data.ris.ripe.net/{rrc['name'].lower()}/",
-                installed=datetime.strptime(rrc["activated_on"], "%Y-%m").replace(day=1, tzinfo=UTC),
-                # "" for still active.
-                removed=deactivated,
+def index_files_for_rrcs(
+    rrcs: Iterable[int], start_time: datetime.datetime, end_time: datetime.datetime
+) -> list[str]:
+    """Gather the index URLs for the RRCs given.
+
+    Args:
+        rrcs: List of RRC collector IDs
+        start_time: Start time for gathering index files (inclusive)
+        end_time: End time for gathering index files (exclusive)
+
+    Returns:
+        List of URLs to RRC index files
+    """
+    # align to first day of the month at 00:00
+    start_time = start_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    index_urls = []
+
+    for rrc in rrcs:
+        now = start_time
+        while True:
+            index_url = BASE_URL_TEMPLATE.format(
+                rrc=rrc, year=now.year, month=now.month
             )
+            index_urls.append(RrcIndexEntry(rrc=rrc, url=index_url))
+            del index_url
+            now = (now + datetime.timedelta(days=32)).replace(day=1)
+
+            if now > end_time:
+                break
+
+    return index_urls
 
 
-async def get_routeviews_collectors(session: aiohttp.ClientSession) -> AsyncGenerator[CollectorInfo]:
-    """
-    Get the list of RouteViews collectors.
-    """
-    async with session.get("https://api.routeviews.org/guest/collector/", raise_for_status=True) as resp:
-        data = await resp.json()
+async def process_rrc_index(
+    session: aiohttp.ClientSession, entry: RrcIndexEntry
+) -> list[RisFileEntry]:
+    """Download the relevant indices for the given RRC and yield the updates in the interval."""
+    result = []
+    async with session.get(entry.url) as response:
+        if response.status != 200:
+            click.echo(f"Skipping {entry.url} due to HTTP error {response.status}")
+        else:
+            parser = AnchorTagParser()
+            parser.feed(await response.text())
 
-        for collector in data["results"]:
-            yield CollectorInfo(
-                collector_name=collector["name"],
-                project="RV",
-                base_url=collector["url"],
-                installed=datetime.fromisoformat(collector["installed"]),
-                removed=datetime.fromisoformat(collector["removed"]) if collector["removed"] else None,
-            )
+            for link in parser.links:
+                file_name = link.split("/")[-1]
+                if file_name.startswith("updates.") or file_name.startswith("bview."):
+                    result.append(
+                        RisFileEntry(
+                            entry.rrc, file_name, urllib.parse.urljoin(entry.url, link)
+                        )
+                    )
+
+    return result
+
+
+class AnchorTagParser(HTMLParser):
+    """Parse out the A tags"""
+
+    extension: str
+    links: list[str]
+
+    def __init__(self, extension: str = ".gz"):
+        super().__init__()
+        self.extension = extension
+        self.links = []
+
+    def handle_starttag(self, tag, attrs):
+        """Handle open tags."""
+        if tag == "a":
+            for attr in attrs:
+                if attr[0] == "href" and attr[1].endswith(self.extension):
+                    self.links.append(attr[1])
