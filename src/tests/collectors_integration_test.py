@@ -3,7 +3,7 @@ import aiohttp
 import pytest
 import pytest_asyncio
 
-from mrt_downloader.collector_index import get_ripe_ris_collectors, CollectorInfo, get_routeviews_collectors
+from mrt_downloader.collectors import get_ripe_ris_collectors, CollectorInfo, get_routeviews_collectors
 from mrt_downloader.http import build_session
 
 @pytest_asyncio.fixture
