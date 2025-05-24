@@ -1,13 +1,11 @@
-
-from dataclasses import dataclass
 import datetime
+import urllib
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Iterable
 
 import aiohttp
 import click
-import urllib
-
 
 BASE_URL_TEMPLATE = "https://data.ris.ripe.net/rrc{rrc:02}/{year:04}.{month:02}/"
 

@@ -4,7 +4,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from importlib.metadata import version, PackageNotFoundError
+from importlib.metadata import PackageNotFoundError, version
 
 import aiohttp
 from aiohttp import ClientTimeout
@@ -18,6 +18,7 @@ except PackageNotFoundError:
     __version__ = "development"
 
 USER_AGENT = f"mrt-downloader/{__version__} https://github.com/ties/mrt-downloader"
+
 
 @dataclass
 class Download:

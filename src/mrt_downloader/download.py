@@ -12,6 +12,7 @@ BVIEW_DATE_TYPE = click.DateTime(
     formats=["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M"]
 )
 
+
 async def download_files(
     target_dir: Path,
     start_time: datetime.datetime,
