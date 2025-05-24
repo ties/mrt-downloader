@@ -4,17 +4,38 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from importlib.metadata import version, PackageNotFoundError
 
 import aiohttp
+from aiohttp import ClientTimeout
 from click import Path
 
 LOG = logging.getLogger(__name__)
 
+try:
+    __version__ = version("mrt-downloader")
+except PackageNotFoundError:
+    __version__ = "development"
+
+USER_AGENT = f"mrt-downloader/{__version__} https://github.com/ties/mrt-downloader"
 
 @dataclass
 class Download:
     url: str
     target_file: Path
+
+
+def build_session() -> aiohttp.ClientSession:
+    """
+    Build an aiohttp client session with default settings and user-agent.
+    """
+    # aiohttp TCPConnector users happy eyeballs by default
+    #
+    # We use a low total timeout (downloads can take minutes), but relatively quick connect timeout.
+    return aiohttp.ClientSession(
+        timeout=ClientTimeout(total=15 * 60, sock_connect=30),
+        headers={"User-Agent": USER_AGENT},
+    )
 
 
 async def download_file(session: aiohttp.ClientSession, download: Download) -> None:
