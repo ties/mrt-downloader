@@ -24,7 +24,7 @@ given below.
 There are two ways to use this project:
 
   * Install the command-line tool using pipx
-  * As a checked out python project, using poetry
+  * As a checked out python project, using uv
   * Or as a library (there is no documentation for this at the moment).
 
 ### pipx
@@ -34,14 +34,14 @@ pipx install git+https://github.com/ties/mrt-downloader.git
 # Now the command should be available as `mrt-downloader`
 mrt-downloader mrt 2025-01-16T00:50 2025-01-17T00:00
 ```
-### poetry
+### uv
 
 **Only recommended when editing the project**
 ```
 # install dependencies
-poetry install
+uv install
 # download a day's MRT files into the mrt directory.
-poetry run python -m mrt_downloader.cli mrt 2025-01-16T00:50 2025-01-17T00:00
+uv run python -m mrt_downloader.cli mrt 2025-01-16T00:50 2025-01-17T00:00
 ```
 
 ## Full example: Running on Rocky Linux 9

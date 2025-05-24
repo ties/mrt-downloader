@@ -27,9 +27,9 @@ async def test_mrt_download(tmp_path: pathlib.Path) -> None:
     )
 
     files = list(tmp_path.iterdir())
-    # there should be 2x13 (updates - beginning and end are inclusive) + 2 files (bviews)
+    # there should be 2x13 (updates - beginning is inclusive) + 2 files (bviews)
     # just the session
-    assert len(files) > 20
+    assert len(files) > 24
     print(list(tmp_path.glob("*update*")))
 
     update_files = set(p.name for p in tmp_path.glob("*updates*"))

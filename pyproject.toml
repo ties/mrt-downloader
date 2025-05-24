@@ -6,21 +6,17 @@ authors = [{name="Ties de Kock", email="ties@tiesdekock.nl"}]
 requires-python = ">=3.11"
 readme = "README.md"
 packages = [{include = "mrt_downloader"}]
+dependencies = [
+    "aiohttp>=3.11.18",
+    "click>=8.1.8",
+]
 
 [project.scripts]
 mrt-downloader = "mrt_downloader.cli:cli"
 
-[tool.poetry.dependencies]
-aiohttp = "^3.11.11"
-click = "^8.1.8"
-
-[tool.poetry.group.dev.dependencies]
-pytest = "^8.3.4"
-pytest-asyncio = "^0.25.2"
-
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["uv_build>=0.7.8,<0.8.0"]
+build-backend = "uv_build"
 
 [tool.black]
 target-version = ["py311"]
@@ -48,11 +44,15 @@ lint.ignore = ["E501"]
 
 [tool.pytest]
 junit_family = "xunit2"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_mode = "auto"
 
 [settings]
 
 [dependency-groups]
 dev = [
     "black>=25.1.0",
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.26.0",
 ]
 # known_third_party = []
