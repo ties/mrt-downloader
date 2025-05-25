@@ -19,6 +19,7 @@ class CollectorIndexEntry:
     collector: CollectorInfo
     url: str
     time_period: datetime.datetime
+    file_types: set[Literal["rib", "update"]] = frozenset()
 
 
 @dataclass
@@ -45,6 +46,62 @@ def round_to_five(then: datetime.datetime, up=False) -> datetime.datetime:
     """
     minutes = 5 * ((then.minute // 5) + (up and 1 or 0))
     return then.replace(minute=minutes, second=0, microsecond=0)
+
+
+def index_files_for_collector(
+    collector: CollectorInfo, start_time: datetime.datetime, end_time: datetime.datetime
+) -> list[CollectorIndexEntry]:
+    """Gather the index URLs for the given collector.
+
+    Args:
+        collector: CollectorInfo object for the collector
+        start_time: Start time for gathering index files (inclusive)
+        end_time: End time for gathering index files (exclusive)
+
+    Returns:
+        List of URLs to collector index files
+    """
+    # align start time to first day of the month at 00:00
+    start_time = start_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    index_urls: list[CollectorIndexEntry] = []
+
+    now = start_time
+    while True:
+        match collector.project:
+            case "RV":
+                index_urls.extend(
+                    [
+                        CollectorIndexEntry(
+                            collector=collector,
+                            url=f"{collector.base_url}{now.year:04}.{now.month:02}/RIBS/",
+                            time_period=now,
+                            file_types=frozenset(["rib"]),
+                        ),
+                        CollectorIndexEntry(
+                            collector=collector,
+                            url=f"{collector.base_url}{now.year:04}.{now.month:02}/UPDATES/",
+                            time_period=now,
+                            file_types=frozenset(["update"]),
+                        ),
+                    ]
+                )
+
+            case "RIS":
+                index_urls.append(
+                    CollectorIndexEntry(
+                        collector=collector,
+                        url=f"{collector.base_url}{now.year:04}.{now.month:02}/",
+                        time_period=now,
+                        file_types=frozenset(["rib", "update"]),
+                    )
+                )
+
+        now = (now + datetime.timedelta(days=32)).replace(day=1)
+
+        if now > end_time:
+            break
+
+    return index_urls
 
 
 def index_files_for_rrcs(

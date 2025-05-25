@@ -66,7 +66,7 @@ def parse_routeviews_collectors(obj: object) -> list[CollectorInfo]:
             CollectorInfo(
                 collector_name=collector["name"],
                 project="RV",
-                base_url=collector["url"],
+                base_url=f"https://archive.routeviews.org/{collector['name']}/bgpdata/",
                 installed=datetime.datetime.fromisoformat(collector["installed"]),
                 removed=datetime.datetime.fromisoformat(collector["removed"])
                 if collector["removed"]
