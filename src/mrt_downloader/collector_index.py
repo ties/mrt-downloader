@@ -2,46 +2,17 @@ import datetime
 import logging
 import os
 import urllib
-from dataclasses import dataclass
 from html.parser import HTMLParser
-from typing import Iterable, Literal
+from typing import Iterable
 
 import aiohttp
 import click
 
-from mrt_downloader.collectors import CollectorInfo
+from mrt_downloader.models import CollectorFileEntry, CollectorIndexEntry, CollectorInfo
 
 LOG = logging.getLogger(__name__)
 
 BASE_URL_TEMPLATE = "https://data.ris.ripe.net/rrc{rrc:02}/{year:04}.{month:02}/"
-
-
-@dataclass
-class CollectorIndexEntry:
-    """An entry for a file listing for a collector."""
-
-    collector: CollectorInfo
-    url: str
-    time_period: datetime.datetime
-    file_types: set[Literal["rib", "update"]] = frozenset()
-
-
-@dataclass
-class CollectorFileEntry:
-    collector: CollectorInfo
-    filename: str
-    url: str
-
-    file_type: Literal["rib", "update"] | None = None
-
-    @property
-    def date(self) -> datetime.datetime | None:
-        """Extract the date from the file name."""
-        try:
-            date_tokens = ".".join(self.filename.split(".")[-3:-1])
-            return datetime.datetime.strptime(date_tokens, "%Y%m%d.%H%M")
-        except ValueError:
-            return None
 
 
 def round_to_five(then: datetime.datetime, up=False) -> datetime.datetime:

@@ -5,11 +5,11 @@ import pytest
 import pytest_asyncio
 
 from mrt_downloader.collectors import (
-    CollectorInfo,
     get_ripe_ris_collectors,
     get_routeviews_collectors,
 )
 from mrt_downloader.http import build_session
+from mrt_downloader.models import CollectorInfo
 
 
 @pytest_asyncio.fixture
