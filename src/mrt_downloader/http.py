@@ -10,6 +10,12 @@ import aiohttp
 from aiohttp import ClientTimeout
 from click import Path
 
+from mrt_downloader.collector_index import (
+    CollectorFileEntry,
+    CollectorIndexEntry,
+    process_index_entry,
+)
+
 LOG = logging.getLogger(__name__)
 
 try:
@@ -98,3 +104,40 @@ async def worker(session: aiohttp.ClientSession, queue: asyncio.Queue[Download])
             queue.task_done()
 
     return processed
+
+
+class IndexWorker:
+    session: aiohttp.ClientSession
+    queue: asyncio.Queue[CollectorIndexEntry]
+    results: list[CollectorFileEntry] = []
+
+    def __init__(
+        self, session: aiohttp.ClientSession, queue: asyncio.Queue[CollectorIndexEntry]
+    ):
+        self.session = session
+        self.queue = queue
+        self.results = []
+
+    async def run(self) -> None:
+        processed = 0
+        while not self.queue.empty():
+            index_entry = await self.queue.get()
+            processed += 1
+            try:
+                async with self.session.get(index_entry.url) as response:
+                    if response.status != 200:
+                        LOG.error(
+                            "Failed to download index %s: HTTP %d",
+                            index_entry.url,
+                            response.status,
+                        )
+                        continue
+
+                    self.results.extend(
+                        process_index_entry(index_entry, await response.text())
+                    )
+            except Exception as e:
+                LOG.error(e)
+            finally:
+                self.queue.task_done()
+        return processed
