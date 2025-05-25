@@ -2,25 +2,32 @@ import datetime
 import urllib
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from typing import Iterable
+from typing import Iterable, Literal
 
 import aiohttp
 import click
+
+from mrt_downloader.collectors import CollectorInfo
 
 BASE_URL_TEMPLATE = "https://data.ris.ripe.net/rrc{rrc:02}/{year:04}.{month:02}/"
 
 
 @dataclass
-class RrcIndexEntry:
-    rrc: int
+class CollectorIndexEntry:
+    """An entry for a file listing for a collector."""
+
+    collector: CollectorInfo
     url: str
+    time_period: datetime.datetime
 
 
 @dataclass
-class RisFileEntry:
-    rrc: int
+class CollectorFileEntry:
+    collector: CollectorInfo
     file_name: str
     url: str
+
+    file_type: Literal["rib", "update"] | None = None
 
     @property
     def date(self) -> datetime.datetime | None:
@@ -63,7 +70,9 @@ def index_files_for_rrcs(
             index_url = BASE_URL_TEMPLATE.format(
                 rrc=rrc, year=now.year, month=now.month
             )
-            index_urls.append(RrcIndexEntry(rrc=rrc, url=index_url))
+            index_urls.append(
+                CollectorIndexEntry(collector=rrc, url=index_url, time_period=now)
+            )
             del index_url
             now = (now + datetime.timedelta(days=32)).replace(day=1)
 
@@ -74,8 +83,8 @@ def index_files_for_rrcs(
 
 
 async def process_rrc_index(
-    session: aiohttp.ClientSession, entry: RrcIndexEntry
-) -> list[RisFileEntry]:
+    session: aiohttp.ClientSession, entry: CollectorIndexEntry
+) -> list[CollectorFileEntry]:
     """Download the relevant indices for the given RRC and yield the updates in the interval."""
     result = []
     async with session.get(entry.url) as response:
@@ -89,8 +98,10 @@ async def process_rrc_index(
                 file_name = link.split("/")[-1]
                 if file_name.startswith("updates.") or file_name.startswith("bview."):
                     result.append(
-                        RisFileEntry(
-                            entry.rrc, file_name, urllib.parse.urljoin(entry.url, link)
+                        CollectorFileEntry(
+                            entry.collector,
+                            file_name,
+                            urllib.parse.urljoin(entry.url, link),
                         )
                     )
 
