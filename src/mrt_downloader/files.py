@@ -11,4 +11,19 @@ class ByCollectorNamingStrategy(FileNamingStrategy):
         self.base_path = base_path
 
     def get_path(self, entry: CollectorFileEntry) -> pathlib.Path:
-        return self.base_path / entry.collector.name / entry.filename
+        return self.base_path / entry.collector.name.lower() / entry.filename
+
+
+class ByCollectorAndMonthNamingStrategy(FileNamingStrategy):
+    base_path: pathlib.Path
+
+    def __init__(self, base_path: pathlib.Path):
+        self.base_path = base_path
+
+    def get_path(self, entry: CollectorFileEntry) -> pathlib.Path:
+        return (
+            self.base_path
+            / entry.collector.name.lower()
+            / entry.date.strftime("%Y.%m")
+            / entry.filename
+        )
