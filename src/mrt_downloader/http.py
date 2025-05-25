@@ -5,6 +5,7 @@ import os
 import time
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
+from typing import Iterable, Literal
 
 import aiohttp
 from aiohttp import ClientTimeout
@@ -110,18 +111,33 @@ class IndexWorker:
     session: aiohttp.ClientSession
     queue: asyncio.Queue[CollectorIndexEntry]
     results: list[CollectorFileEntry] = []
+    file_types: frozenset[Literal["rib", "update"]]
 
     def __init__(
-        self, session: aiohttp.ClientSession, queue: asyncio.Queue[CollectorIndexEntry]
+        self,
+        session: aiohttp.ClientSession,
+        queue: asyncio.Queue[CollectorIndexEntry],
+        file_types: Iterable[Literal["rib", "update"]] = frozenset(("rib", "update")),
     ):
         self.session = session
         self.queue = queue
         self.results = []
+        self.file_types = frozenset(file_types)
 
     async def run(self) -> None:
         processed = 0
         while not self.queue.empty():
             index_entry = await self.queue.get()
+            if not index_entry.file_types & self.file_types:
+                LOG.debug(
+                    "Skipping index %s, contains %s (want: %s)",
+                    index_entry.url,
+                    index_entry.file_types,
+                    self.file_types,
+                )
+                self.queue.task_done()
+                continue
+
             processed += 1
             try:
                 async with self.session.get(index_entry.url) as response:
