@@ -5,7 +5,11 @@ from pathlib import Path
 import aiohttp
 import click
 
-from mrt_downloader.collector_index import index_files_for_rrcs, process_rrc_index
+from mrt_downloader.collector_index import (
+    CollectorFileEntry,
+    index_files_for_rrcs,
+    process_rrc_index,
+)
 from mrt_downloader.http import Download, build_session, worker
 
 BVIEW_DATE_TYPE = click.DateTime(
@@ -24,7 +28,7 @@ async def download_files(
     partition_directories: bool = False,
 ):
     """Gather the list of update files per timestamp per rrc and download them."""
-    matches = []
+    matches: list[CollectorFileEntry] = []
     if rrc is not None and len(rrc) > 0:
         click.echo(
             click.style(f"Downloading updates from _only_ RRCs {rrc}", fg="green")
@@ -58,7 +62,7 @@ async def download_files(
             target_base_dir.mkdir(parents=True, exist_ok=True)
 
         # path name is prefixed with rrc to cluster files from the same rrc.
-        target_path = target_base_dir / f"rrc{file.rrc:02}-{file.file_name}"
+        target_path = target_base_dir / f"{file.collector}-{file.file_name}"
         await queue.put(Download(file.url, target_path))
 
     click.echo(
