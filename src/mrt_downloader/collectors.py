@@ -14,29 +14,23 @@ class CollectorInfo:
     removed: datetime.datetime | None = None
 
 
-async def get_ripe_ris_collectors(
-    session: aiohttp.ClientSession,
-) -> AsyncGenerator[CollectorInfo, None]:
-    """
-    Get the list of RIPE RIS collectors.
-    """
-    async with session.get(
-        "https://stat.ripe.net/data/rrc-info/data.json", raise_for_status=True
-    ) as resp:
-        data = await resp.json()
+def parse_ripe_ris_collectors(obj: object) -> list[CollectorInfo]:
+    """Parse RIPEstat RIS collector data"""
+    rrcs = obj["data"]["rrcs"]
+    collectors = []
 
-        rrcs = data["data"]["rrcs"]
-        for rrc in rrcs:
-            if rrc.get("deactivated_on", None):
-                deactivated = datetime.datetime.strptime(
-                    rrc["deactivated_on"], "%Y-%m"
-                ).replace(day=1, tzinfo=datetime.UTC)
-                # Make sure we capture the final day of the month
-                deactivated = (deactivated + datetime.timedelta(days=32)).replace(day=1)
-            else:
-                deactivated = None
+    for rrc in rrcs:
+        if rrc.get("deactivated_on", None):
+            deactivated = datetime.datetime.strptime(
+                rrc["deactivated_on"], "%Y-%m"
+            ).replace(day=1, tzinfo=datetime.UTC)
+            # Make sure we capture the final day of the month
+            deactivated = (deactivated + datetime.timedelta(days=32)).replace(day=1)
+        else:
+            deactivated = None
 
-            yield CollectorInfo(
+        collectors.append(
+            CollectorInfo(
                 collector_name=rrc["name"],
                 project="RIS",
                 base_url=f"https://data.ris.ripe.net/{rrc['name'].lower()}/",
@@ -46,6 +40,41 @@ async def get_ripe_ris_collectors(
                 # "" for still active.
                 removed=deactivated,
             )
+        )
+
+    return collectors
+
+
+async def get_ripe_ris_collectors(
+    session: aiohttp.ClientSession,
+) -> list[CollectorInfo]:
+    """
+    Get the list of RIPE RIS collectors.
+    """
+    async with session.get(
+        "https://stat.ripe.net/data/rrc-info/data.json", raise_for_status=True
+    ) as resp:
+        data = await resp.json()
+
+        return parse_ripe_ris_collectors(data)
+
+
+def parse_routeviews_collectors(obj: object) -> list[CollectorInfo]:
+    collectors = []
+    for collector in obj["results"]:
+        collectors.append(
+            CollectorInfo(
+                collector_name=collector["name"],
+                project="RV",
+                base_url=collector["url"],
+                installed=datetime.datetime.fromisoformat(collector["installed"]),
+                removed=datetime.datetime.fromisoformat(collector["removed"])
+                if collector["removed"]
+                else None,
+            )
+        )
+
+    return collectors
 
 
 async def get_routeviews_collectors(
@@ -59,13 +88,4 @@ async def get_routeviews_collectors(
     ) as resp:
         data = await resp.json()
 
-        for collector in data["results"]:
-            yield CollectorInfo(
-                collector_name=collector["name"],
-                project="RV",
-                base_url=collector["url"],
-                installed=datetime.datetime.fromisoformat(collector["installed"]),
-                removed=datetime.datetime.fromisoformat(collector["removed"])
-                if collector["removed"]
-                else None,
-            )
+        return parse_routeviews_collectors(data)

@@ -22,7 +22,7 @@ async def session() -> aiohttp.ClientSession:
 async def test_get_ripe_ris_collectors(session: aiohttp.ClientSession):
     """Get the collectors and do some sanity checks."""
     async with session as sess:
-        collectors = [collector async for collector in get_ripe_ris_collectors(sess)]
+        collectors = await get_ripe_ris_collectors(sess)
 
         assert len(collectors) > 10
         rrc00: CollectorInfo = next(
@@ -46,7 +46,7 @@ async def test_get_ripe_ris_collectors(session: aiohttp.ClientSession):
 async def test_get_routeviews_collectors(session: aiohttp.ClientSession):
     """Get the RouteViews collectors and do some sanity checks."""
     async with session as sess:
-        collectors = [collector async for collector in get_routeviews_collectors(sess)]
+        collectors = await get_routeviews_collectors(sess)
 
         assert len(collectors) >= 50
         routeviews8: CollectorInfo = next(
