@@ -25,11 +25,9 @@ async def test_get_ripe_ris_collectors(session: aiohttp.ClientSession):
         collectors = await get_ripe_ris_collectors(sess)
 
         assert len(collectors) > 10
-        rrc00: CollectorInfo = next(
-            (c for c in collectors if c.collector_name == "RRC00"), None
-        )
+        rrc00: CollectorInfo = next((c for c in collectors if c.name == "RRC00"), None)
 
-        assert rrc00.collector_name == "RRC00"
+        assert rrc00.name == "RRC00"
         assert rrc00.project == "RIS"
         assert rrc00.base_url == "https://data.ris.ripe.net/rrc00/"
         assert rrc00.installed == datetime(1999, 10, 1, tzinfo=UTC)
@@ -37,7 +35,7 @@ async def test_get_ripe_ris_collectors(session: aiohttp.ClientSession):
 
         # Now get a deactivated collector
         deactivated_rrc: CollectorInfo = next(
-            (c for c in collectors if c.collector_name == "RRC02"), None
+            (c for c in collectors if c.name == "RRC02"), None
         )
         assert deactivated_rrc.removed == datetime(2008, 11, 1, tzinfo=UTC)
 
@@ -49,11 +47,11 @@ async def test_get_routeviews_collectors(session: aiohttp.ClientSession):
         collectors = await get_routeviews_collectors(sess)
 
         assert len(collectors) >= 50
-        routeviews8: CollectorInfo = next(
-            (c for c in collectors if c.collector_name == "route-views8"), None
-        )
+        routeviews8: CollectorInfo = [
+            c for c in collectors if c.name == "route-views8"
+        ][0]
 
-        assert routeviews8.collector_name == "route-views8"
+        assert routeviews8.name == "route-views8"
         assert routeviews8.project == "RV"
         assert (
             routeviews8.base_url

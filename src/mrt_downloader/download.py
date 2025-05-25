@@ -47,9 +47,9 @@ async def download_files(
             for entry in index:
                 if entry.date >= start_time and entry.date <= end_time:
                     # bview only filtering
-                    if bview_only and not entry.file_name.startswith("bview."):
+                    if bview_only and not entry.filename.startswith("bview."):
                         continue
-                    if update_only and not entry.file_name.startswith("updates."):
+                    if update_only and not entry.filename.startswith("updates."):
                         continue
                     matches.append(entry)
 
@@ -62,7 +62,7 @@ async def download_files(
             target_base_dir.mkdir(parents=True, exist_ok=True)
 
         # path name is prefixed with rrc to cluster files from the same rrc.
-        target_path = target_base_dir / f"{file.collector}-{file.file_name}"
+        target_path = target_base_dir / f"{file.collector}-{file.filename}"
         await queue.put(Download(file.url, target_path))
 
     click.echo(

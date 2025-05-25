@@ -7,7 +7,7 @@ import aiohttp
 
 @dataclass
 class CollectorInfo:
-    collector_name: str
+    name: str
     project: Literal["RIS", "RV"]
     base_url: str
     installed: datetime.datetime
@@ -31,7 +31,7 @@ def parse_ripe_ris_collectors(obj: object) -> list[CollectorInfo]:
 
         collectors.append(
             CollectorInfo(
-                collector_name=rrc["name"],
+                name=rrc["name"],
                 project="RIS",
                 base_url=f"https://data.ris.ripe.net/{rrc['name'].lower()}/",
                 installed=datetime.datetime.strptime(
@@ -64,7 +64,7 @@ def parse_routeviews_collectors(obj: object) -> list[CollectorInfo]:
     for collector in obj["results"]:
         collectors.append(
             CollectorInfo(
-                collector_name=collector["name"],
+                name=collector["name"],
                 project="RV",
                 base_url=f"https://archive.routeviews.org/{collector['name']}/bgpdata/",
                 installed=datetime.datetime.fromisoformat(collector["installed"]),

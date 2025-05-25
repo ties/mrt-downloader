@@ -1,4 +1,6 @@
 import datetime
+import logging
+import os
 import urllib
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -8,6 +10,8 @@ import aiohttp
 import click
 
 from mrt_downloader.collectors import CollectorInfo
+
+LOG = logging.getLogger(__name__)
 
 BASE_URL_TEMPLATE = "https://data.ris.ripe.net/rrc{rrc:02}/{year:04}.{month:02}/"
 
@@ -25,7 +29,7 @@ class CollectorIndexEntry:
 @dataclass
 class CollectorFileEntry:
     collector: CollectorInfo
-    file_name: str
+    filename: str
     url: str
 
     file_type: Literal["rib", "update"] | None = None
@@ -34,7 +38,7 @@ class CollectorFileEntry:
     def date(self) -> datetime.datetime | None:
         """Extract the date from the file name."""
         try:
-            date_tokens = ".".join(self.file_name.split(".")[-3:-1])
+            date_tokens = ".".join(self.filename.split(".")[-3:-1])
             return datetime.datetime.strptime(date_tokens, "%Y%m%d.%H%M")
         except ValueError:
             return None
@@ -104,6 +108,52 @@ def index_files_for_collector(
     return index_urls
 
 
+def process_index_entry(
+    index: CollectorIndexEntry, html: str
+) -> list[CollectorFileEntry]:
+    """Extract the relevant files from the collector index entry."""
+    result = []
+    parser = AnchorTagParser()
+    parser.feed(html)
+
+    for link in parser.links:
+        # build the full url
+        url = urllib.parse.urljoin(index.url, link)
+        # skip links out of the base directory
+        if not url.startswith(index.url):
+            LOG.info(
+                "Skipping link %s as it is not in the base directory %s",
+                link,
+                index.url,
+            )
+            continue
+
+        path = urllib.parse.urlparse(url).path
+        filename = os.path.basename(path)
+
+        match filename:
+            case f if f.startswith("bview."):
+                file_type = "rib"
+            case f if f.startswith("rib."):
+                file_type = "rib"
+            case f if f.startswith("updates."):
+                file_type = "update"
+            case _:
+                LOG.warning("Unknown file type for %s, skipping", filename)
+                continue
+
+        result.append(
+            CollectorFileEntry(
+                index.collector,
+                filename,
+                url,
+                file_type,
+            )
+        )
+
+    return result
+
+
 def index_files_for_rrcs(
     rrcs: Iterable[int], start_time: datetime.datetime, end_time: datetime.datetime
 ) -> list[str]:
@@ -168,17 +218,17 @@ async def process_rrc_index(
 class AnchorTagParser(HTMLParser):
     """Parse out the A tags"""
 
-    extension: str
+    extensions: frozenset[str]
     links: list[str]
 
-    def __init__(self, extension: str = ".gz"):
+    def __init__(self, extensions: Iterable[str] = frozenset(["gz", "bz2"])):
         super().__init__()
-        self.extension = extension
+        self.extensions = frozenset(extensions)
         self.links = []
 
     def handle_starttag(self, tag, attrs):
         """Handle open tags."""
         if tag == "a":
             for attr in attrs:
-                if attr[0] == "href" and attr[1].endswith(self.extension):
+                if attr[0] == "href" and attr[1].split(".")[-1] in self.extensions:
                     self.links.append(attr[1])
