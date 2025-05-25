@@ -1,6 +1,6 @@
 import datetime
 from dataclasses import dataclass
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Literal
 
 import aiohttp
 
@@ -8,7 +8,7 @@ import aiohttp
 @dataclass
 class CollectorInfo:
     collector_name: str
-    project: str
+    project: Literal["RIS", "RV"]
     base_url: str
     installed: datetime.datetime
     removed: datetime.datetime | None = None
