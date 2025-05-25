@@ -232,3 +232,8 @@ class AnchorTagParser(HTMLParser):
             for attr in attrs:
                 if attr[0] == "href" and attr[1].split(".")[-1] in self.extensions:
                     self.links.append(attr[1])
+                else:
+                    LOG.debug(
+                        "Skipping link %s (extension not on allowlist)",
+                        attr[1],
+                    )
