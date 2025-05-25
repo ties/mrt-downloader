@@ -3,7 +3,9 @@ import email
 import logging
 import os
 import time
+from abc import ABC, abstractmethod
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 from typing import Iterable, Literal
 
 import aiohttp
@@ -96,6 +98,110 @@ async def worker(session: aiohttp.ClientSession, queue: asyncio.Queue[Download])
             queue.task_done()
 
     return processed
+
+
+class FileNamingStrategy(ABC):
+    @abstractmethod
+    def get_path(self, entry: CollectorFileEntry) -> Path:
+        pass
+
+
+class DownloadWorker:
+    session: aiohttp.ClientSession
+    queue: asyncio.Queue[CollectorFileEntry]
+    naming_strategy: FileNamingStrategy
+    check_modified: bool
+
+    def __init__(
+        self,
+        naming_strategy: FileNamingStrategy,
+        session: aiohttp.ClientSession,
+        queue: asyncio.Queue[Download],
+        check_modified: bool = True,
+    ):
+        self.session = session
+        self.queue = queue
+        self.naming_strategy = naming_strategy
+        self.check_modified = check_modified
+
+    async def download_file(self, entry: CollectorFileEntry) -> None:
+        target_file = self.naming_strategy.get_path(entry)
+
+        # Create target directory if it does not exist
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+
+        t0 = time.time()
+        if target_file.is_file():
+            if not self.check_modified:
+                LOG.debug(
+                    "Skipping %s w/o modification check, already downloaded",
+                    target_file,
+                )
+                return
+
+            # check if file is modified
+            async with self.session.head(entry.url) as response:
+                content_length = response.headers.get("Content-Length", None)
+                last_modified = response.headers.get("Last-Modified", None)
+                if content_length and last_modified:
+                    # Stat the current file
+                    stat = target_file.stat()
+                    last_modified_date = email.utils.parsedate_to_datetime(
+                        last_modified
+                    )
+                    if (
+                        stat.st_size == int(content_length)
+                        and stat.st_mtime == last_modified_date.timestamp()
+                    ):
+                        LOG.debug(
+                            "Skipping %s (%db at %s), already downloaded",
+                            target_file,
+                            stat.st_size,
+                            last_modified_date,
+                        )
+                        return
+
+        async with self.session.get(entry.url) as response:
+            LOG.debug("HTTP %d %.3fs", response.status, time.time() - t0)
+            if response.status == 200:
+                with target_file.open("wb") as f:
+                    async for data in response.content.iter_chunked(131072):
+                        f.write(data)
+                # Get last modified time from the response
+                last_modified = response.headers.get("Last-Modified", None)
+                if last_modified:
+                    last_modified_date = email.utils.parsedate_to_datetime(
+                        last_modified
+                    )
+                    os.utime(
+                        target_file,
+                        (
+                            last_modified_date.timestamp(),
+                            last_modified_date.timestamp(),
+                        ),
+                    )
+
+                LOG.debug(
+                    "Downloaded %s to %s in %.3fs",
+                    entry.url,
+                    target_file,
+                    time.time() - t0,
+                )
+            else:
+                raise ValueError(f"Got status {response.status} for {entry.url}")
+
+    async def run(self) -> None:
+        processed = 0
+        while not self.queue.empty():
+            download = await self.queue.get()
+            processed += 1
+            try:
+                await self.download_file(download)
+            except Exception as e:
+                LOG.error(e)
+            finally:
+                self.queue.task_done()
+        return processed
 
 
 class IndexWorker:
