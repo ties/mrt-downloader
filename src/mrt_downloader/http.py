@@ -3,19 +3,16 @@ import email
 import logging
 import os
 import time
-from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from typing import Iterable, Literal
 
 import aiohttp
 from aiohttp import ClientTimeout
-from click import Path
 
 from mrt_downloader.collector_index import (
-    CollectorFileEntry,
-    CollectorIndexEntry,
     process_index_entry,
 )
+from mrt_downloader.models import CollectorFileEntry, CollectorIndexEntry, Download
 
 LOG = logging.getLogger(__name__)
 
@@ -25,12 +22,6 @@ except PackageNotFoundError:
     __version__ = "development"
 
 USER_AGENT = f"mrt-downloader/{__version__} https://github.com/ties/mrt-downloader"
-
-
-@dataclass
-class Download:
-    url: str
-    target_file: Path
 
 
 def build_session() -> aiohttp.ClientSession:

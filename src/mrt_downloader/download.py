@@ -6,11 +6,11 @@ import aiohttp
 import click
 
 from mrt_downloader.collector_index import (
-    CollectorFileEntry,
     index_files_for_rrcs,
     process_rrc_index,
 )
-from mrt_downloader.http import Download, build_session, worker
+from mrt_downloader.http import build_session, worker
+from mrt_downloader.models import CollectorFileEntry, Download
 
 BVIEW_DATE_TYPE = click.DateTime(
     formats=["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M"]

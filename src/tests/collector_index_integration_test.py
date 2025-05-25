@@ -4,9 +4,8 @@ from typing import Counter
 
 import pytest
 
-from mrt_downloader.collector_index import CollectorIndexEntry
-from mrt_downloader.collectors import CollectorInfo
 from mrt_downloader.http import IndexWorker, build_session
+from mrt_downloader.models import CollectorIndexEntry, CollectorInfo
 from tests.collector_index_test import (  # noqa: F401
     ris_collectors,
     routeviews_collectors,

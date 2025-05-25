@@ -5,15 +5,14 @@ from pathlib import Path
 import pytest
 
 from mrt_downloader.collector_index import (
-    CollectorIndexEntry,
     index_files_for_collector,
     process_index_entry,
 )
 from mrt_downloader.collectors import (
-    CollectorInfo,
     parse_ripe_ris_collectors,
     parse_routeviews_collectors,
 )
+from mrt_downloader.models import CollectorIndexEntry, CollectorInfo
 
 
 @pytest.fixture

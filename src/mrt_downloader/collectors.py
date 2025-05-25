@@ -1,17 +1,9 @@
 import datetime
-from dataclasses import dataclass
-from typing import AsyncGenerator, Literal
+from typing import AsyncGenerator
 
 import aiohttp
 
-
-@dataclass
-class CollectorInfo:
-    name: str
-    project: Literal["RIS", "RV"]
-    base_url: str
-    installed: datetime.datetime
-    removed: datetime.datetime | None = None
+from mrt_downloader.models import CollectorInfo
 
 
 def parse_ripe_ris_collectors(obj: object) -> list[CollectorInfo]:
