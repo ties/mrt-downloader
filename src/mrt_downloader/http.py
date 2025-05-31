@@ -102,7 +102,7 @@ async def worker(session: aiohttp.ClientSession, queue: asyncio.Queue[Download])
 
 class FileNamingStrategy(ABC):
     @abstractmethod
-    def get_path(self, entry: CollectorFileEntry) -> Path:
+    def get_path(self, entry: CollectorFileEntry, override_path: Path | None) -> Path:
         pass
 
 
@@ -116,7 +116,7 @@ class DownloadWorker:
         self,
         naming_strategy: FileNamingStrategy,
         session: aiohttp.ClientSession,
-        queue: asyncio.Queue[Download],
+        queue: asyncio.Queue[CollectorFileEntry],
         check_modified: bool = True,
     ):
         self.session = session
@@ -190,7 +190,7 @@ class DownloadWorker:
             else:
                 raise ValueError(f"Got status {response.status} for {entry.url}")
 
-    async def run(self) -> None:
+    async def run(self) -> int:
         processed = 0
         while not self.queue.empty():
             download = await self.queue.get()
@@ -221,7 +221,7 @@ class IndexWorker:
         self.results = []
         self.file_types = frozenset(file_types)
 
-    async def run(self) -> None:
+    async def run(self) -> int:
         processed = 0
         while not self.queue.empty():
             index_entry = await self.queue.get()
