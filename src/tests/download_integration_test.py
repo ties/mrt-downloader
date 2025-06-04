@@ -22,12 +22,12 @@ async def test_mrt_download(tmp_path: pathlib.Path) -> None:
         tmp_path,
         yesterday_midnight,
         yesterday_one_am,
-        rrc=[4, 11],
+        collectors=["rrc04", "rrc11"],
         num_workers=multiprocessing.cpu_count(),
     )
 
     files = list(tmp_path.iterdir())
-    # there should be 2x13 (updates - beginning is inclusive) + 2 files (bviews)
+    # there should be 2x13 (updates - beginning is inclusive) + 2 files (ribs)
     # just the session
     assert len(files) > 24
     print(list(tmp_path.glob("*update*")))
