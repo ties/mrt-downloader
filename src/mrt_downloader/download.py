@@ -22,23 +22,26 @@ async def download_files(
     start_time: datetime.datetime,
     end_time: datetime.datetime,
     num_workers: int,
-    bview_only: bool = False,
+    rib_only: bool = False,
     update_only: bool = False,
-    rrc: list[str] | None = None,
+    collectors: list[str] | None = None,
     partition_directories: bool = False,
 ):
     """Gather the list of update files per timestamp per rrc and download them."""
     matches: list[CollectorFileEntry] = []
-    if rrc is not None and len(rrc) > 0:
+    if collectors is not None and len(collectors) > 0:
         click.echo(
-            click.style(f"Downloading updates from _only_ RRCs {rrc}", fg="green")
+            click.style(
+                f"Downloading updates from _only_ these collectors: {collectors}",
+                fg="green",
+            )
         )
-        rrcs = [int(r) for r in rrc]
     else:
-        # More RRCs than present
-        rrcs = list(range(0, 28))
+        collectors = [f"rrc{x:02}" for x in range(0, 28)]
 
-    index_urls = index_files_for_rrcs(rrcs, start_time, end_time)
+    index_urls = index_files_for_rrcs(
+        [int(rrc[-2:]) for rrc in collectors], start_time, end_time
+    )
     async with aiohttp.ClientSession() as session:
         indexes = await asyncio.gather(
             *[process_rrc_index(session, index) for index in index_urls]
@@ -47,7 +50,7 @@ async def download_files(
             for entry in index:
                 if entry.date >= start_time and entry.date <= end_time:
                     # bview only filtering
-                    if bview_only and not entry.filename.startswith("bview."):
+                    if rib_only and not entry.filename.startswith("bview."):
                         continue
                     if update_only and not entry.filename.startswith("updates."):
                         continue

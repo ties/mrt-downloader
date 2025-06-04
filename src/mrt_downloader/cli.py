@@ -6,6 +6,8 @@ import asyncio
 import datetime
 import logging
 import multiprocessing
+import sys
+import warnings
 from pathlib import Path
 from typing import Optional
 
@@ -37,13 +39,32 @@ BVIEW_DATE_TYPE = click.DateTime(
     "--partition-directories",
     is_flag=True,
     default=False,
-    help="Partition directories by [year]/[month]/[day]/[hour]",
+    help="Partition directories by [year]/[month]/[day]/[hour] (deprecated)",
 )
 @click.option("--verbose", is_flag=True, help="Enable verbose logging")
-@click.option("--bview-only", is_flag=True, help="Download bview files only")
+@click.option(
+    "--bview-only",
+    is_flag=True,
+    help="Download bview files only (use --rib-only)",
+    deprecated=True,
+)
+@click.option("--rib-only", is_flag=True, help="Download full RIB files only.")
 @click.option("--update-only", is_flag=True, help="Download update files only")
 @click.option(
-    "--rrc", type=str, multiple=True, default=[], help="RRCs to download from"
+    "--rrc",
+    type=str,
+    multiple=True,
+    default=[],
+    help="RRC (number) to download from (e.g. 1 for rrc01) - use --collector",
+    deprecated=True,
+)
+@click.option(
+    "--collector",
+    type=str,
+    multiple=True,
+    default=[],
+    help="collectors to download from (e.g. rrc00, ...)",
+    deprecated=True,
 )
 @click.option(
     "--num-threads",
@@ -57,15 +78,51 @@ def cli(
     start_time: datetime.datetime,
     end_time: datetime.datetime,
     verbose: bool,
-    bview_only: bool,
     update_only: bool,
     num_threads: int,
-    rrc: Optional[str],
     partition_directories: bool,
+    collector: list[str] = None,
+    rrc: Optional[str] = None,
+    rib_only: bool = None,
+    bview_only: bool = None,
 ):
     """
     Download a set of BGP updates from RIS.
     """
+    if rrc and collector:
+        click.echo(
+            click.style(
+                "Cannot specify both --rrc and --collector. Please use --collector.",
+                fg="red",
+            )
+        )
+        sys.exit(1)
+
+    if rrc:
+        warnings.warn(
+            "--rrc is deprecated. Please use --collector instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        click.echo(
+            click.style(
+                "Warning: --rrc is deprecated. This will be deprecated on/after 1-9-20205. Please use --collector instead.",
+                fg="yellow",
+            )
+        )
+
+    if bview_only:
+        warnings.warn("--bview-only is deprecated.", DeprecationWarning, stacklevel=2)
+        click.echo(
+            click.style(
+                "Warning: --bview-only is deprecated. This will be deprecated on/after 1-9-20205. Please use ---only instead.",
+                fg="yellow",
+            )
+        )
+
+    effective_rib_only = rib_only or bview_only
+    effective_collectors = collector if collector else ["rrc{x:02}" for x in rrc]
+
     if not target_dir.exists():
         if create_target:
             # Make directory if needed
@@ -89,7 +146,7 @@ def cli(
         click.echo(
             click.style("Cannot specify both --update-only and --bview-only", fg="red")
         )
-        return
+        sys.exit(1)
 
     click.echo(
         click.style(
@@ -102,9 +159,9 @@ def cli(
             target_dir,
             start_time,
             end_time,
-            bview_only=bview_only,
+            rib_only=effective_rib_only,
             update_only=update_only,
-            rrc=rrc,
+            collectors=effective_collectors,
             num_workers=num_threads,
             partition_directories=partition_directories,
         )
