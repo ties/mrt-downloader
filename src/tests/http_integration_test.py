@@ -37,9 +37,9 @@ async def test_download_worker(
     tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     async with build_session() as session:
-        naming_strategy = ByCollectorNamingStrategy(tmp_path)
+        naming_strategy = ByCollectorNamingStrategy()
         queue = asyncio.Queue()
-        worker = DownloadWorker(naming_strategy, session, queue)
+        worker = DownloadWorker(tmp_path, naming_strategy, session, queue)
 
         queue.put_nowait(DOWNLOADS[0])
         queue.put_nowait(DOWNLOADS[1])
@@ -50,7 +50,7 @@ async def test_download_worker(
 
         # Check if files were downloaded
         for entry in DOWNLOADS:
-            file_path = naming_strategy.get_path(entry)
+            file_path = naming_strategy.get_path(tmp_path, entry)
             assert file_path.exists(), f"File {entry.filename} was not downloaded."
             assert file_path.is_file(), f"{file_path} is not a file."
             assert file_path.stat().st_size > 0, f"{file_path} is empty."

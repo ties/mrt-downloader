@@ -102,11 +102,12 @@ async def worker(session: aiohttp.ClientSession, queue: asyncio.Queue[Download])
 
 class FileNamingStrategy(ABC):
     @abstractmethod
-    def get_path(self, entry: CollectorFileEntry, override_path: Path | None) -> Path:
+    def get_path(self, path: Path, entry: CollectorFileEntry) -> Path:
         pass
 
 
 class DownloadWorker:
+    base_dir: Path
     session: aiohttp.ClientSession
     queue: asyncio.Queue[CollectorFileEntry]
     naming_strategy: FileNamingStrategy
@@ -114,18 +115,20 @@ class DownloadWorker:
 
     def __init__(
         self,
+        base_dir: Path,
         naming_strategy: FileNamingStrategy,
         session: aiohttp.ClientSession,
         queue: asyncio.Queue[CollectorFileEntry],
         check_modified: bool = True,
     ):
+        self.base_dir = base_dir
         self.session = session
         self.queue = queue
         self.naming_strategy = naming_strategy
         self.check_modified = check_modified
 
     async def download_file(self, entry: CollectorFileEntry) -> None:
-        target_file = self.naming_strategy.get_path(entry)
+        target_file = self.naming_strategy.get_path(self.base_dir, entry)
 
         # Create target directory if it does not exist
         target_file.parent.mkdir(parents=True, exist_ok=True)
