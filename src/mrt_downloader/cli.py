@@ -19,7 +19,7 @@ LOG = logging.getLogger(__name__)  #
 logging.basicConfig(level=logging.INFO)
 
 
-BVIEW_DATE_TYPE = click.DateTime(
+CLICK_DATETIME_TYPE = click.DateTime(
     formats=["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M"]
 )
 
@@ -30,8 +30,8 @@ BVIEW_DATE_TYPE = click.DateTime(
     type=click.Path(exists=False, file_okay=False, path_type=Path),
     default=Path.cwd() / "mrt",
 )
-@click.argument("start-time", type=BVIEW_DATE_TYPE)
-@click.argument("end-time", type=BVIEW_DATE_TYPE)
+@click.argument("start-time", type=CLICK_DATETIME_TYPE)
+@click.argument("end-time", type=CLICK_DATETIME_TYPE)
 @click.option(
     "--create-target", is_flag=True, default=False, help="Create target directory"
 )
@@ -40,6 +40,7 @@ BVIEW_DATE_TYPE = click.DateTime(
     is_flag=True,
     default=False,
     help="Partition directories by [year]/[month]/[day]/[hour] (deprecated)",
+    deprecated=True,
 )
 @click.option("--verbose", is_flag=True, help="Enable verbose logging")
 @click.option(
@@ -64,7 +65,7 @@ BVIEW_DATE_TYPE = click.DateTime(
     multiple=True,
     default=[],
     help="collectors to download from (e.g. rrc00, ...)",
-    deprecated=True,
+    deprecated=False,
 )
 @click.option(
     "--num-threads",
@@ -81,10 +82,10 @@ def cli(
     update_only: bool,
     num_threads: int,
     partition_directories: bool,
-    collector: list[str] = None,
-    rrc: Optional[str] = None,
-    rib_only: bool = None,
-    bview_only: bool = None,
+    collector: list[str] | None = None,
+    rrc: Optional[list[str]] = None,
+    rib_only: bool | None = None,
+    bview_only: bool | None = None,
 ):
     """
     Download a set of BGP updates from RIS.
@@ -120,8 +121,10 @@ def cli(
             )
         )
 
-    effective_rib_only = rib_only or bview_only
-    effective_collectors = collector if collector else ["rrc{x:02}" for x in rrc]
+    effective_rib_only = bool(rib_only or bview_only)
+    effective_collectors = (
+        collector if collector else ["rrc{x:02}" for x in rrc] if rrc else []
+    )
 
     if not target_dir.exists():
         if create_target:
@@ -142,9 +145,12 @@ def cli(
     else:
         logging.getLogger().setLevel(logging.INFO)
 
-    if update_only and bview_only:
+    if update_only and effective_rib_only:
         click.echo(
-            click.style("Cannot specify both --update-only and --bview-only", fg="red")
+            click.style(
+                "Cannot specify both --update-only and --rib-only/--bview-only",
+                fg="red",
+            )
         )
         sys.exit(1)
 

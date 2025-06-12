@@ -2,6 +2,7 @@ import datetime
 import logging
 import os
 import urllib
+import urllib.parse
 from html.parser import HTMLParser
 from typing import Iterable
 
@@ -127,7 +128,7 @@ def process_index_entry(
 
 def index_files_for_rrcs(
     rrcs: Iterable[int], start_time: datetime.datetime, end_time: datetime.datetime
-) -> list[str]:
+) -> list[CollectorIndexEntry]:
     """Gather the index URLs for the RRCs given.
 
     Args:
@@ -148,6 +149,7 @@ def index_files_for_rrcs(
             index_url = BASE_URL_TEMPLATE.format(
                 rrc=rrc, year=now.year, month=now.month
             )
+            # FIXME: This should be a property Collector.
             index_urls.append(
                 CollectorIndexEntry(collector=rrc, url=index_url, time_period=now)
             )
@@ -201,10 +203,14 @@ class AnchorTagParser(HTMLParser):
         """Handle open tags."""
         if tag == "a":
             for attr in attrs:
-                if attr[0] == "href" and attr[1].split(".")[-1] in self.extensions:
-                    self.links.append(attr[1])
+                attr, value = attr
+                if not value:
+                    continue
+
+                if attr == "href" and value.split(".")[-1] in self.extensions:
+                    self.links.append(value)
                 else:
                     LOG.debug(
                         "Skipping link %s (extension not on allowlist)",
-                        attr[1],
+                        value,
                     )
