@@ -1,5 +1,5 @@
 import asyncio
-import email
+import email.utils
 import logging
 import os
 import time

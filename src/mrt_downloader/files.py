@@ -7,7 +7,7 @@ from mrt_downloader.models import CollectorFileEntry
 class ByCollectorPartitionedStategy(FileNamingStrategy):
     inner_strategy: FileNamingStrategy
 
-    def __init__(self, inner: type[FileNamingStrategy] = None):
+    def __init__(self, inner: FileNamingStrategy):
         self.inner_strategy = inner
 
     def get_path(self, path: pathlib.Path, entry: CollectorFileEntry) -> pathlib.Path:
