@@ -39,7 +39,9 @@ class CollectorFileEntry:
         @raise ValueError if the date cannot be parsed
         """
         date_tokens = ".".join(self.filename.split(".")[-3:-1])
-        return datetime.datetime.strptime(date_tokens, "%Y%m%d.%H%M")
+        return datetime.datetime.strptime(date_tokens, "%Y%m%d.%H%M").replace(
+            tzinfo=datetime.UTC
+        )
 
 
 @dataclass

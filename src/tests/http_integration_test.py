@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-from mrt_downloader.files import ByCollectorNamingStrategy
+from mrt_downloader.files import ByCollectorStrategy
 from mrt_downloader.http import DownloadWorker, build_session
 from mrt_downloader.models import CollectorFileEntry, CollectorInfo
 
@@ -37,7 +37,7 @@ async def test_download_worker(
     tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     async with build_session() as session:
-        naming_strategy = ByCollectorNamingStrategy()
+        naming_strategy = ByCollectorStrategy()
         queue = asyncio.Queue()
         worker = DownloadWorker(tmp_path, naming_strategy, session, queue)
 

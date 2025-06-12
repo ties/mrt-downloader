@@ -16,7 +16,12 @@ class ByCollectorPartitionedStategy(FileNamingStrategy):
         return self.inner_strategy.get_path(inner_base, entry)
 
 
-class ByCollectorNamingStrategy(FileNamingStrategy):
+class IdentityStrategy(FileNamingStrategy):
+    def get_path(self, path: pathlib.Path, entry: CollectorFileEntry) -> pathlib.Path:
+        return path / entry.filename
+
+
+class ByCollectorStrategy(FileNamingStrategy):
     def get_path(self, path: pathlib.Path, entry: CollectorFileEntry) -> pathlib.Path:
         return path / entry.collector.name.lower() / entry.filename
 

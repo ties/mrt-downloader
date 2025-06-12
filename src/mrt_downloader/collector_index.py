@@ -43,34 +43,37 @@ def index_files_for_collector(
 
     now = start_time
     while True:
-        match collector.project:
-            case "RV":
-                index_urls.extend(
-                    [
-                        CollectorIndexEntry(
-                            collector=collector,
-                            url=f"{collector.base_url}{now.year:04}.{now.month:02}/RIBS/",
-                            time_period=now,
-                            file_types=frozenset(["rib"]),
-                        ),
-                        CollectorIndexEntry(
-                            collector=collector,
-                            url=f"{collector.base_url}{now.year:04}.{now.month:02}/UPDATES/",
-                            time_period=now,
-                            file_types=frozenset(["update"]),
-                        ),
-                    ]
-                )
-
-            case "RIS":
-                index_urls.append(
-                    CollectorIndexEntry(
-                        collector=collector,
-                        url=f"{collector.base_url}{now.year:04}.{now.month:02}/",
-                        time_period=now,
-                        file_types=frozenset(["rib", "update"]),
+        if now >= collector.installed and (
+            not collector.removed or now <= collector.removed
+        ):
+            match collector.project:
+                case "RV":
+                    index_urls.extend(
+                        [
+                            CollectorIndexEntry(
+                                collector=collector,
+                                url=f"{collector.base_url}{now.year:04}.{now.month:02}/RIBS/",
+                                time_period=now,
+                                file_types=frozenset(["rib"]),
+                            ),
+                            CollectorIndexEntry(
+                                collector=collector,
+                                url=f"{collector.base_url}{now.year:04}.{now.month:02}/UPDATES/",
+                                time_period=now,
+                                file_types=frozenset(["update"]),
+                            ),
+                        ]
                     )
-                )
+
+                case "RIS":
+                    index_urls.append(
+                        CollectorIndexEntry(
+                            collector=collector,
+                            url=f"{collector.base_url}{now.year:04}.{now.month:02}/",
+                            time_period=now,
+                            file_types=frozenset(["rib", "update"]),
+                        )
+                    )
 
         now = (now + datetime.timedelta(days=32)).replace(day=1)
 
