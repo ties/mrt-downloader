@@ -13,7 +13,10 @@ from mrt_downloader.collector_index import (
     index_files_for_collector,
 )
 from mrt_downloader.collectors import get_ripe_ris_collectors, get_routeviews_collectors
-from mrt_downloader.files import ByHourStrategy, IdentityStrategy
+from mrt_downloader.files import (
+    PrefixCollectorByHourStrategy,
+    PrefixCollectorStrategy,
+)
 from mrt_downloader.http import DownloadWorker, IndexWorker
 from mrt_downloader.models import (
     CollectorFileEntry,
@@ -100,7 +103,9 @@ async def download_files(
         LOG.info("Processed %d indices", sum(status))
 
         naming_strategy = (
-            ByHourStrategy() if partition_directories else IdentityStrategy()
+            PrefixCollectorByHourStrategy()
+            if partition_directories
+            else PrefixCollectorStrategy()
         )
         queue: asyncio.Queue[CollectorFileEntry] = asyncio.Queue()
         download_worker = DownloadWorker(target_dir, naming_strategy, session, queue)

@@ -44,3 +44,18 @@ class ByHourStrategy(FileNamingStrategy):
             / entry.date.strftime("%H")
             / entry.filename
         )
+
+
+class PrefixCollectorStrategy(FileNamingStrategy):
+    def get_path(self, path: pathlib.Path, entry: CollectorFileEntry) -> pathlib.Path:
+        return path / f"{entry.collector.name.lower()}-{entry.filename}"
+
+
+class PrefixCollectorByHourStrategy(FileNamingStrategy):
+    def get_path(self, path: pathlib.Path, entry: CollectorFileEntry) -> pathlib.Path:
+        return (
+            path
+            / entry.date.strftime("%Y.%m.%d")
+            / entry.date.strftime("%H")
+            / f"{entry.collector.name.lower()}-{entry.filename}"
+        )

@@ -11,7 +11,7 @@ from mrt_downloader.download import download_files
 async def test_mrt_download(tmp_path: pathlib.Path) -> None:
     # Download a limited number of files
     yesterday_midnight = (datetime.datetime.now() - datetime.timedelta(days=1)).replace(
-        hour=0, minute=0, second=0, microsecond=0
+        hour=0, minute=0, second=0, microsecond=0, tzinfo=datetime.UTC
     )
     yesterday_one_am = yesterday_midnight.replace(hour=1)
 
@@ -27,7 +27,7 @@ async def test_mrt_download(tmp_path: pathlib.Path) -> None:
     )
 
     files = list(tmp_path.iterdir())
-    # there should be 2x13 (updates - beginning is inclusive) + 2 files (ribs)
+    # there should be 2x13 (updates - beginning/end are inclusive) + 2 files (ribs)
     # just the session
     assert len(files) > 24
     print(list(tmp_path.glob("*update*")))
