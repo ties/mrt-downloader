@@ -1,6 +1,6 @@
 import asyncio
 import datetime
-from typing import Counter
+from collections import Counter
 
 import pytest
 

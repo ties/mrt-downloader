@@ -33,6 +33,23 @@ def ris_collectors() -> list[CollectorInfo]:
         return parse_ripe_ris_collectors(data)
 
 
+BKNIX_COLLECTOR = CollectorInfo(
+    name="route-views.bknix",
+    project="RV",
+    base_url="https://archive.routeviews.org/route-views.bknix/bgpdata/",
+    installed=datetime.datetime(2019, 10, 29, 0, 0, 0, tzinfo=datetime.UTC),
+    removed=None,
+)
+
+RRC08_COLLECTOR = CollectorInfo(
+    name="RRC08",
+    project="RIS",
+    base_url="https://data.ris.ripe.net/rrc08/",
+    installed=datetime.datetime(2002, 5, 1, 0, 0, 0, tzinfo=datetime.UTC),
+    removed=datetime.datetime(2004, 10, 1, 0, 0, 0, tzinfo=datetime.UTC),
+)
+
+
 def test_index_files_for_collector_routeviews(
     routeviews_collectors: list[CollectorInfo],
 ) -> None:
@@ -79,7 +96,7 @@ def test_index_files_for_ris(ris_collectors: list[CollectorInfo]) -> None:
 
 def test_parse_index_file_routeviews_ribs() -> None:
     index_entry = CollectorIndexEntry(
-        None,
+        BKNIX_COLLECTOR,
         "https://archive.routeviews.org/route-views.bknix/bgpdata/2020.04/RIBS/",
         datetime.datetime(2020, 4, 1, tzinfo=datetime.UTC),
         file_types=frozenset({"rib"}),
@@ -101,7 +118,7 @@ def test_parse_index_file_routeviews_ribs() -> None:
 
 def test_parse_index_file_routeviews_updates() -> None:
     index_entry = CollectorIndexEntry(
-        None,
+        BKNIX_COLLECTOR,
         "https://archive.routeviews.org/route-views.bknix/bgpdata/2020.04/UPDATES/",
         datetime.datetime(2020, 4, 1, tzinfo=datetime.UTC),
         file_types=frozenset({"rib"}),
@@ -123,7 +140,7 @@ def test_parse_index_file_routeviews_updates() -> None:
 
 def test_parse_index_file_ris() -> None:
     index_entry = CollectorIndexEntry(
-        None,
+        RRC08_COLLECTOR,
         "https://data.ris.ripe.net/rrc08/2020.04/",
         datetime.datetime(2020, 4, 1, tzinfo=datetime.UTC),
         file_types=frozenset({"rib", "update"}),
