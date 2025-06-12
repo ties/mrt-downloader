@@ -1,16 +1,27 @@
 import asyncio
 import datetime
+import itertools
+import logging
 from pathlib import Path
+from types import CoroutineType
+from typing import Any, Literal
 
 import aiohttp
 import click
 
 from mrt_downloader.collector_index import (
-    index_files_for_rrcs,
-    process_rrc_index,
+    index_files_for_collector,
 )
-from mrt_downloader.http import build_session, worker
-from mrt_downloader.models import CollectorFileEntry, Download
+from mrt_downloader.collectors import get_ripe_ris_collectors, get_routeviews_collectors
+from mrt_downloader.files import ByHourStrategy, IdentityStrategy
+from mrt_downloader.http import DownloadWorker, IndexWorker
+from mrt_downloader.models import (
+    CollectorFileEntry,
+    CollectorIndexEntry,
+    CollectorInfo,
+)
+
+LOG = logging.getLogger(__name__)
 
 BVIEW_DATE_TYPE = click.DateTime(
     formats=["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M"]
@@ -26,9 +37,21 @@ async def download_files(
     update_only: bool = False,
     collectors: list[str] | None = None,
     partition_directories: bool = False,
+    project: frozenset[Literal["RIS", "RV"]] = frozenset(["RIS"]),
 ):
     """Gather the list of update files per timestamp per rrc and download them."""
-    matches: list[CollectorFileEntry] = []
+    assert start_time.tzinfo == datetime.UTC, "Start time must be in UTC"
+    assert end_time.tzinfo == datetime.UTC, "End time must be in UTC"
+    assert start_time < end_time, "Start time must be before end time"
+
+    file_types = (
+        frozenset("rib")
+        if rib_only
+        else frozenset("update")
+        if update_only
+        else frozenset(["rib", "update"])
+    )
+
     if collectors is not None and len(collectors) > 0:
         click.echo(
             click.style(
@@ -39,55 +62,64 @@ async def download_files(
     else:
         collectors = [f"rrc{x:02}" for x in range(0, 28)]
 
-    index_urls = index_files_for_rrcs(
-        [int(rrc[-2:]) for rrc in collectors], start_time, end_time
-    )
+    # Get the collectors
     async with aiohttp.ClientSession() as session:
-        indexes = await asyncio.gather(
-            *[process_rrc_index(session, index) for index in index_urls]
+        collector_tasks: list[CoroutineType[Any, Any, list[CollectorInfo]]] = []
+        if "RIS" in project:
+            collector_tasks.append(get_ripe_ris_collectors(session))
+        if "RV" in project:
+            collector_tasks.append(get_routeviews_collectors(session))
+
+        collector_infos = list(
+            itertools.chain.from_iterable(await asyncio.gather(*collector_tasks))
         )
-        for index in indexes:
-            for entry in index:
-                if entry.date >= start_time and entry.date <= end_time:
-                    # bview only filtering
-                    if rib_only and not entry.filename.startswith("bview."):
-                        continue
-                    if update_only and not entry.filename.startswith("updates."):
-                        continue
-                    matches.append(entry)
-
-    queue = asyncio.Queue()
-
-    for file in matches:
-        target_base_dir = target_dir
-        if partition_directories:
-            target_base_dir = target_base_dir / file.date.strftime("%d/%H/")
-            target_base_dir.mkdir(parents=True, exist_ok=True)
-
-        # path name is prefixed with rrc to cluster files from the same rrc.
-        target_path = target_base_dir / f"{file.collector}-{file.filename}"
-        await queue.put(Download(file.url, target_path))
-
-    click.echo(
-        click.style(
-            f"Downloading {len(matches)} files on {num_workers} workers", fg="green"
-        )
-    )
-
-    async with build_session() as session:
-        workers = [worker(session, queue) for i in range(num_workers)]
-
-        statuses = await asyncio.gather(*workers)
-        await queue.join()
-
-        total_files = 0
-
-        for status_count in statuses:
-            total_files += status_count
-            click.echo(click.style(f"Downloaded {status_count} files"))
-
-        click.echo(
-            click.style(
-                f"Downloaded {total_files} files to {str(target_dir)}", fg="green"
+        # Filter collectors based on the provided list
+        collector_infos = [
+            collector
+            for collector in collector_infos
+            if collector.name.lower() in set(c.lower() for c in collectors)
+        ]
+        # Now get the index paths - these are filtered for the relevant period.
+        indices = list(
+            itertools.chain.from_iterable(
+                [
+                    index_files_for_collector(collector, start_time, end_time)
+                    for collector in collector_infos
+                ]
             )
         )
+
+        index_queue: asyncio.Queue[CollectorIndexEntry] = asyncio.Queue()
+        for idx in indices:
+            index_queue.put_nowait(idx)
+
+        index_worker = IndexWorker(session, index_queue)
+        # run num_workers workers to get the indices.
+        status = await asyncio.gather(*[index_worker.run() for _ in range(num_workers)])
+
+        LOG.info("Processed %d indices", sum(status))
+
+        naming_strategy = (
+            ByHourStrategy() if partition_directories else IdentityStrategy()
+        )
+        queue: asyncio.Queue[CollectorFileEntry] = asyncio.Queue()
+        download_worker = DownloadWorker(target_dir, naming_strategy, session, queue)
+
+        # Add the relevant files to queue
+        collected_files = 0
+        for file in index_worker.results:
+            if (
+                file.date >= start_time
+                and file.date <= end_time
+                and file.file_type in file_types
+            ):
+                queue.put_nowait(file)
+                collected_files += 1
+
+        LOG.info("Collected %d files for download", collected_files)
+
+        # Now run the download workers.
+        download_status = await asyncio.gather(
+            *[download_worker.run() for _ in range(num_workers)]
+        )
+        LOG.info("Downloaded %d files", sum(download_status))

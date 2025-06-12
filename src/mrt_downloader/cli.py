@@ -163,8 +163,8 @@ def cli(
     asyncio.run(
         download_files(
             target_dir,
-            start_time,
-            end_time,
+            start_time.replace(tzinfo=datetime.UTC),
+            end_time.replace(tzinfo=datetime.UTC),
             rib_only=effective_rib_only,
             update_only=update_only,
             collectors=effective_collectors,
