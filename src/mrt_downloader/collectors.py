@@ -1,12 +1,11 @@
 import datetime
-from typing import AsyncGenerator
 
 import aiohttp
 
 from mrt_downloader.models import CollectorInfo
 
 
-def parse_ripe_ris_collectors(obj: object) -> list[CollectorInfo]:
+def parse_ripe_ris_collectors(obj: dict[str, dict]) -> list[CollectorInfo]:
     """Parse RIPEstat RIS collector data"""
     rrcs = obj["data"]["rrcs"]
     collectors = []
@@ -51,7 +50,7 @@ async def get_ripe_ris_collectors(
         return parse_ripe_ris_collectors(data)
 
 
-def parse_routeviews_collectors(obj: object) -> list[CollectorInfo]:
+def parse_routeviews_collectors(obj: dict[str, dict]) -> list[CollectorInfo]:
     collectors = []
     for collector in obj["results"]:
         collectors.append(
@@ -71,7 +70,7 @@ def parse_routeviews_collectors(obj: object) -> list[CollectorInfo]:
 
 async def get_routeviews_collectors(
     session: aiohttp.ClientSession,
-) -> AsyncGenerator[CollectorInfo, None]:
+) -> list[CollectorInfo]:
     """
     Get the list of RouteViews collectors.
     """

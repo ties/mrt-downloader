@@ -25,7 +25,7 @@ async def test_get_ripe_ris_collectors(session: aiohttp.ClientSession):
         collectors = await get_ripe_ris_collectors(sess)
 
         assert len(collectors) > 10
-        rrc00: CollectorInfo = next((c for c in collectors if c.name == "RRC00"), None)
+        rrc00: CollectorInfo = [c for c in collectors if c.name == "RRC00"][0]
 
         assert rrc00.name == "RRC00"
         assert rrc00.project == "RIS"
@@ -34,9 +34,7 @@ async def test_get_ripe_ris_collectors(session: aiohttp.ClientSession):
         assert rrc00.removed is None
 
         # Now get a deactivated collector
-        deactivated_rrc: CollectorInfo = next(
-            (c for c in collectors if c.name == "RRC02"), None
-        )
+        deactivated_rrc: CollectorInfo = [c for c in collectors if c.name == "RRC02"][0]
         assert deactivated_rrc.removed == datetime(2008, 11, 1, tzinfo=UTC)
 
 

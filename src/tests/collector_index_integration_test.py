@@ -60,7 +60,7 @@ async def test_get_file_entries_ris(ris_collectors: list[CollectorInfo]):  # noq
 
 @pytest.mark.asyncio
 async def test_get_file_entries_routeviews(routeviews_collectors: list[CollectorInfo]):  # noqa: F811
-    bknix = ([r for r in routeviews_collectors if r.name == "route-views.bknix"][0],)
+    bknix = [r for r in routeviews_collectors if r.name == "route-views.bknix"][0]
     async with build_session() as sess:
         index_queue = asyncio.Queue()
 
@@ -111,7 +111,7 @@ async def test_get_file_entries_routeviews(routeviews_collectors: list[Collector
 async def test_get_file_entries_routeviews_ribs(
     routeviews_collectors: list[CollectorInfo],  # noqa: F811
 ):
-    bknix = ([r for r in routeviews_collectors if r.name == "route-views.bknix"][0],)
+    bknix = [r for r in routeviews_collectors if r.name == "route-views.bknix"][0]
 
     async with build_session() as sess:
         index_queue = asyncio.Queue()
