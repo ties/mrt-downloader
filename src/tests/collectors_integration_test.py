@@ -28,7 +28,7 @@ async def test_get_ripe_ris_collectors(session: aiohttp.ClientSession):
         rrc00: CollectorInfo = [c for c in collectors if c.name == "RRC00"][0]
 
         assert rrc00.name == "RRC00"
-        assert rrc00.project == "RIS"
+        assert rrc00.project == "ris"
         assert rrc00.base_url == "https://data.ris.ripe.net/rrc00/"
         assert rrc00.installed == datetime(1999, 10, 1, tzinfo=UTC)
         assert rrc00.removed is None
