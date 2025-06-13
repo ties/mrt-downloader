@@ -5,6 +5,7 @@ import pathlib
 import pytest  # type: ignore
 
 from mrt_downloader.download import download_files
+from mrt_downloader.files import PrefixCollectorStrategy
 
 
 @pytest.mark.asyncio
@@ -24,6 +25,7 @@ async def test_mrt_download(tmp_path: pathlib.Path) -> None:
         yesterday_one_am,
         collectors=["rrc04", "rrc11"],
         num_workers=multiprocessing.cpu_count(),
+        naming_strategy=PrefixCollectorStrategy(),
     )
 
     files = list(tmp_path.iterdir())
