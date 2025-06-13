@@ -9,11 +9,17 @@ import multiprocessing
 import sys
 import warnings
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import click
 
 from mrt_downloader.download import download_files
+from mrt_downloader.files import (
+    ByCollectorPartitionedStategy,
+    ByMonthStrategy,
+    PrefixCollectorByHourStrategy,
+    PrefixCollectorStrategy,
+)
 
 LOG = logging.getLogger(__name__)  #
 logging.basicConfig(level=logging.INFO)
@@ -68,6 +74,19 @@ CLICK_DATETIME_TYPE = click.DateTime(
     deprecated=False,
 )
 @click.option(
+    "--project",
+    type=click.Choice(["ris", "routeviews"]),
+    multiple=True,
+    default=["ris"],
+    help="Project to download from: 'ris' (RIPE RIS) or 'routeviews'. Can be specified multiple times to select both.",
+)
+@click.option(
+    "--partitioning",
+    type=click.Choice(["hour", "collector-month", "flat"]),
+    default="collector-month",
+    help="Partitioning strategy for downloaded files: hour is one directory per hour (old --partition), collector-month is similar to structure on data.ris.ripe.net, flat is one directory (filename prefixed with the collector, followed by original name)",
+)
+@click.option(
     "--num-threads",
     type=int,
     default=multiprocessing.cpu_count(),
@@ -82,6 +101,8 @@ def cli(
     update_only: bool,
     num_threads: int,
     partition_directories: bool,
+    project: list[str],
+    partitioning: Literal["hour", "collector-month", "flat"] = None,
     collector: list[str] | None = None,
     rrc: Optional[list[str]] = None,
     rib_only: bool | None = None,
@@ -160,6 +181,46 @@ def cli(
             fg="green",
         )
     )
+
+    if partitioning and partition_directories:
+        click.echo(
+            click.style(
+                "Cannot specify both --partitioning and --partition-directories",
+                fg="red",
+            )
+        )
+        sys.exit(1)
+
+    naming_strategy = PrefixCollectorStrategy()
+
+    if partition_directories:
+        click.echo(
+            click.style(
+                "Partitioning directories by hour (deprecated, use --partitioning=hour)",
+                fg="yellow",
+            )
+        )
+        naming_strategy = PrefixCollectorByHourStrategy()
+
+    match partitioning:
+        case "hour":
+            click.echo(click.style("Partitioning directories by hour", fg="green"))
+            naming_strategy = PrefixCollectorByHourStrategy()
+        case "collector-month":
+            click.echo(
+                click.style(
+                    "Partitioning directories by collector and month", fg="green"
+                )
+            )
+            naming_strategy = ByCollectorPartitionedStategy(ByMonthStrategy())
+        case "flat":
+            click.echo(
+                click.style(
+                    "Flat directory structure with collector prefix", fg="green"
+                )
+            )
+            naming_strategy = PrefixCollectorStrategy()
+
     asyncio.run(
         download_files(
             target_dir,
@@ -169,7 +230,8 @@ def cli(
             update_only=update_only,
             collectors=effective_collectors,
             num_workers=num_threads,
-            partition_directories=partition_directories,
+            naming_strategy=naming_strategy,
+            project=frozenset(project),
         )
     )
 

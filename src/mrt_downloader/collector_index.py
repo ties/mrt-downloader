@@ -47,7 +47,7 @@ def index_files_for_collector(
             not collector.removed or now <= collector.removed
         ):
             match collector.project:
-                case "RV":
+                case "routeviews":
                     index_urls.extend(
                         [
                             CollectorIndexEntry(
@@ -65,7 +65,7 @@ def index_files_for_collector(
                         ]
                     )
 
-                case "RIS":
+                case "ris":
                     index_urls.append(
                         CollectorIndexEntry(
                             collector=collector,

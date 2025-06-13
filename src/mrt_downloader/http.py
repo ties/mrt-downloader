@@ -253,9 +253,10 @@ class IndexWorker:
                 async with self.session.get(index_entry.url) as response:
                     if response.status != 200:
                         LOG.error(
-                            "Failed to download index %s: HTTP %d",
+                            "Failed to download index %s: HTTP %d for %s",
                             index_entry.url,
                             response.status,
+                            index_entry.collector,
                         )
                         continue
 
