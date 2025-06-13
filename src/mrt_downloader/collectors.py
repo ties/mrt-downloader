@@ -23,7 +23,7 @@ def parse_ripe_ris_collectors(obj: dict[str, dict]) -> list[CollectorInfo]:
         collectors.append(
             CollectorInfo(
                 name=rrc["name"],
-                project="RIS",
+                project="ris",
                 base_url=f"https://data.ris.ripe.net/{rrc['name'].lower()}/",
                 installed=datetime.datetime.strptime(
                     rrc["activated_on"], "%Y-%m"
@@ -53,11 +53,19 @@ async def get_ripe_ris_collectors(
 def parse_routeviews_collectors(obj: dict[str, dict]) -> list[CollectorInfo]:
     collectors = []
     for collector in obj["results"]:
+        match collector["name"]:
+            case "route-views2":
+                base_url = "https://archive.routeviews.org/bgpdata/"
+            case _:
+                base_url = (
+                    f"https://archive.routeviews.org/{collector['name']}/bgpdata/"
+                )
+
         collectors.append(
             CollectorInfo(
                 name=collector["name"],
-                project="RV",
-                base_url=f"https://archive.routeviews.org/{collector['name']}/bgpdata/",
+                project="routeviews",
+                base_url=base_url,
                 installed=datetime.datetime.fromisoformat(collector["installed"]),
                 removed=datetime.datetime.fromisoformat(collector["removed"])
                 if collector["removed"]

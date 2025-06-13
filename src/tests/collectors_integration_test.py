@@ -50,7 +50,7 @@ async def test_get_routeviews_collectors(session: aiohttp.ClientSession):
         ][0]
 
         assert routeviews8.name == "route-views8"
-        assert routeviews8.project == "RV"
+        assert routeviews8.project == "routeviews"
         assert (
             routeviews8.base_url
             == "https://archive.routeviews.org/route-views8/bgpdata/"

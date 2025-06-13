@@ -7,7 +7,7 @@ from typing import Literal
 @dataclass
 class CollectorInfo:
     name: str
-    project: Literal["RIS", "RV"]
+    project: Literal["ris", "routeviews"]
     base_url: str
     installed: datetime.datetime
     removed: datetime.datetime | None = None

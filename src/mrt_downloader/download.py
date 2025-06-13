@@ -13,11 +13,7 @@ from mrt_downloader.collector_index import (
     index_files_for_collector,
 )
 from mrt_downloader.collectors import get_ripe_ris_collectors, get_routeviews_collectors
-from mrt_downloader.files import (
-    PrefixCollectorByHourStrategy,
-    PrefixCollectorStrategy,
-)
-from mrt_downloader.http import DownloadWorker, IndexWorker
+from mrt_downloader.http import DownloadWorker, FileNamingStrategy, IndexWorker
 from mrt_downloader.models import (
     CollectorFileEntry,
     CollectorIndexEntry,
@@ -36,11 +32,11 @@ async def download_files(
     start_time: datetime.datetime,
     end_time: datetime.datetime,
     num_workers: int,
+    naming_strategy: FileNamingStrategy,
     rib_only: bool = False,
     update_only: bool = False,
     collectors: list[str] | None = None,
-    partition_directories: bool = False,
-    project: frozenset[Literal["RIS", "RV"]] = frozenset(["RIS"]),
+    project: frozenset[Literal["ris", "routeviews"]] = frozenset(["ris"]),
 ):
     """Gather the list of update files per timestamp per rrc and download them."""
     assert start_time.tzinfo == datetime.UTC, "Start time must be in UTC"
@@ -58,15 +54,13 @@ async def download_files(
                 fg="green",
             )
         )
-    else:
-        collectors = [f"rrc{x:02}" for x in range(0, 28)]
 
     # Get the collectors
     async with aiohttp.ClientSession() as session:
         collector_tasks: list[CoroutineType[Any, Any, list[CollectorInfo]]] = []
-        if "RIS" in project:
+        if "ris" in project:
             collector_tasks.append(get_ripe_ris_collectors(session))
-        if "RV" in project:
+        if "routeviews" in project:
             collector_tasks.append(get_routeviews_collectors(session))
 
         collector_infos = list(
@@ -76,7 +70,10 @@ async def download_files(
         collector_infos = [
             collector
             for collector in collector_infos
-            if collector.name.lower() in set(c.lower() for c in collectors)
+            if (
+                not collectors
+                or (collector.name.lower() in set(c.lower() for c in collectors))
+            )
         ]
         click.echo(
             click.style(
@@ -105,11 +102,6 @@ async def download_files(
 
         LOG.info("Processed %d indices", sum(status))
 
-        naming_strategy = (
-            PrefixCollectorByHourStrategy()
-            if partition_directories
-            else PrefixCollectorStrategy()
-        )
         queue: asyncio.Queue[CollectorFileEntry] = asyncio.Queue()
         download_worker = DownloadWorker(target_dir, naming_strategy, session, queue)
 
