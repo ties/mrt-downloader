@@ -47,12 +47,8 @@ async def download_files(
     assert end_time.tzinfo == datetime.UTC, "End time must be in UTC"
     assert start_time < end_time, "Start time must be before end time"
 
-    file_types = (
-        frozenset("rib")
-        if rib_only
-        else frozenset("update")
-        if update_only
-        else frozenset(["rib", "update"])
+    file_types = frozenset(
+        ["rib"] if rib_only else ["update"] if update_only else ["rib", "update"]
     )
 
     if collectors is not None and len(collectors) > 0:
@@ -82,6 +78,13 @@ async def download_files(
             for collector in collector_infos
             if collector.name.lower() in set(c.lower() for c in collectors)
         ]
+        click.echo(
+            click.style(
+                f"Gathering index for {len(collector_infos)} collectors: "
+                f"{', '.join(c.name for c in collector_infos)}",
+                fg="green",
+            )
+        )
         # Now get the index paths - these are filtered for the relevant period.
         indices = list(
             itertools.chain.from_iterable(
@@ -121,7 +124,11 @@ async def download_files(
                 queue.put_nowait(file)
                 collected_files += 1
 
-        LOG.info("Collected %d files for download", collected_files)
+        LOG.info(
+            "Selected %d files for download out of %d",
+            collected_files,
+            len(index_worker.results),
+        )
 
         # Now run the download workers.
         download_status = await asyncio.gather(
