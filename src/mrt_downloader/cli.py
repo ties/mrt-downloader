@@ -150,7 +150,7 @@ def cli(
     if not target_dir.exists():
         if create_target:
             # Make directory if needed
-            target_dir.mkdir(exist_ok=True)
+            target_dir.mkdir(exist_ok=True, parents=True)
         else:
             click.echo(
                 click.style(

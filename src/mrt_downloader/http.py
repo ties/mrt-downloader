@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Iterable, Literal, Sequence
 
 import aiohttp
 from aiohttp import ClientTimeout
@@ -119,6 +119,10 @@ async def worker(session: aiohttp.ClientSession, queue: asyncio.Queue[Download])
 class FileNamingStrategy(ABC):
     @abstractmethod
     def get_path(self, path: Path, entry: CollectorFileEntry) -> Path:
+        pass
+
+    @abstractmethod
+    def parse(self, path: Sequence[Path]) -> dict[str, str]:
         pass
 
 

@@ -100,7 +100,11 @@ async def download_files(
         # run num_workers workers to get the indices.
         status = await asyncio.gather(*[index_worker.run() for _ in range(num_workers)])
 
-        LOG.info("Processed %d indices", sum(status))
+        LOG.info(
+            "Processed %d directory indexes for %d collectors",
+            sum(status),
+            len(collector_infos),
+        )
 
         queue: asyncio.Queue[CollectorFileEntry] = asyncio.Queue()
         download_worker = DownloadWorker(target_dir, naming_strategy, session, queue)
