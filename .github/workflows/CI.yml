@@ -72,18 +72,19 @@ jobs:
           python-version-file: ".python-version"
 
       - name: Build
+        # build artifacts are in dist/
         run: uv build
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-linux-${{ matrix.platform.target }}
+          name: linux-${{ matrix.platform.target }}
           path: dist
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: 'wheels-*/*'
+          subject-path: 'linux-*/*'
 
       - name: Publish to PyPI
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
