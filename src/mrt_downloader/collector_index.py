@@ -5,6 +5,7 @@ import urllib
 import urllib.parse
 from html.parser import HTMLParser
 from typing import Iterable
+from warnings import deprecated
 
 import aiohttp
 import click
@@ -13,9 +14,13 @@ from mrt_downloader.models import CollectorFileEntry, CollectorIndexEntry, Colle
 
 LOG = logging.getLogger(__name__)
 
+# This constant will be removed on or after 2025-11-01
 BASE_URL_TEMPLATE = "https://data.ris.ripe.net/rrc{rrc:02}/{year:04}.{month:02}/"
 
 
+@deprecated(
+    "This method will be removed on or after 2025-11-01. The method is no longer used, because files are now taken from the index."
+)
 def round_to_five(then: datetime.datetime, up=False) -> datetime.datetime:
     """
     Round a datetime object to the nearest 5 minutes.
@@ -127,6 +132,7 @@ def process_index_entry(
     return result
 
 
+@deprecated("This method will be removed on or after 2025-11-01.")
 def index_files_for_rrcs(
     rrcs: Iterable[int], start_time: datetime.datetime, end_time: datetime.datetime
 ) -> list[CollectorIndexEntry]:
@@ -163,6 +169,7 @@ def index_files_for_rrcs(
     return index_urls
 
 
+@deprecated("This method will be removed on or after 2025-11-01.")
 async def process_rrc_index(
     session: aiohttp.ClientSession, entry: CollectorIndexEntry
 ) -> list[CollectorFileEntry]:
