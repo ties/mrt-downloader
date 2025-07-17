@@ -87,7 +87,7 @@ def process_index_entry(
     index: CollectorIndexEntry, html: str
 ) -> list[CollectorFileEntry]:
     """Extract the relevant files from the collector index entry."""
-    result = []
+    result: list[CollectorFileEntry] = []
     parser = AnchorTagParser()
     parser.feed(html)
 
@@ -107,9 +107,7 @@ def process_index_entry(
         filename = os.path.basename(path)
 
         match filename:
-            case f if f.startswith("bview."):
-                file_type = "rib"
-            case f if f.startswith("rib."):
+            case f if f.startswith("bview.") or f.startswith("rib."):
                 file_type = "rib"
             case f if f.startswith("updates."):
                 file_type = "update"
