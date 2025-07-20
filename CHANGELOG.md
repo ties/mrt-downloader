@@ -1,6 +1,7 @@
 ## v0.0.4:
 
   * Re-add python 3.11 support (previous release had 3.13 requirement by accident)
+  * update aiohttp
 
 ## v0.0.3:
 
