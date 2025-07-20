@@ -5,10 +5,10 @@ import urllib
 import urllib.parse
 from html.parser import HTMLParser
 from typing import Iterable
-from warnings import deprecated
 
 import aiohttp
 import click
+from typing_extensions import deprecated
 
 from mrt_downloader.models import CollectorFileEntry, CollectorIndexEntry, CollectorInfo
 
@@ -21,7 +21,7 @@ BASE_URL_TEMPLATE = "https://data.ris.ripe.net/rrc{rrc:02}/{year:04}.{month:02}/
 @deprecated(
     "This method will be removed on or after 2025-11-01. The method is no longer used, because files are now taken from the index."
 )
-def round_to_five(then: datetime.datetime, up=False) -> datetime.datetime:
+def round_to_five(then: datetime.datetime, up: bool = False) -> datetime.datetime:
     """
     Round a datetime object to the nearest 5 minutes.
     """
