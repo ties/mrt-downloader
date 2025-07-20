@@ -27,6 +27,9 @@ jobs:
             target: x86_64
           - runner: ubuntu-24.04
             target: aarch64
+        python:
+          - 3.11
+          - 3.13
     steps:
       - uses: actions/checkout@v4
 
@@ -34,6 +37,9 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+
+      - name: Set up python-version
+        run: echo ${{ matrix.python }} > .python-version
 
       - name: "Set up Python"
         uses: actions/setup-python@v5
