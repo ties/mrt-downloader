@@ -101,8 +101,8 @@ def cli(
     update_only: bool,
     num_threads: int,
     partition_directories: bool,
-    project: list[str],
-    partitioning: Literal["hour", "collector-month", "flat"] = None,
+    project: list[Literal["ris", "routeviews"]],
+    partitioning: Literal["hour", "collector-month", "flat"] = "collector-month",
     collector: list[str] | None = None,
     rrc: Optional[list[str]] = None,
     rib_only: bool | None = None,
@@ -144,7 +144,7 @@ def cli(
 
     effective_rib_only = bool(rib_only or bview_only)
     effective_collectors = (
-        collector if collector else ["rrc{x:02}" for x in rrc] if rrc else []
+        collector if collector else [f"rrc{x:02}" for x in rrc] if rrc else []
     )
 
     if not target_dir.exists():

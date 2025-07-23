@@ -1,14 +1,15 @@
 import datetime
+from typing import Any
 
 import aiohttp
 
 from mrt_downloader.models import CollectorInfo
 
 
-def parse_ripe_ris_collectors(obj: dict[str, dict]) -> list[CollectorInfo]:
+def parse_ripe_ris_collectors(obj: dict[str, dict[str, Any]]) -> list[CollectorInfo]:
     """Parse RIPEstat RIS collector data"""
     rrcs = obj["data"]["rrcs"]
-    collectors = []
+    collectors: list[CollectorInfo] = []
 
     for rrc in rrcs:
         if rrc.get("deactivated_on", None):
@@ -50,8 +51,8 @@ async def get_ripe_ris_collectors(
         return parse_ripe_ris_collectors(data)
 
 
-def parse_routeviews_collectors(obj: dict[str, dict]) -> list[CollectorInfo]:
-    collectors = []
+def parse_routeviews_collectors(obj: dict[str, dict[Any, str]]) -> list[CollectorInfo]:
+    collectors: list[CollectorInfo] = []
     for collector in obj["results"]:
         base_url = f"https://archive.routeviews.org/{collector['name']}/bgpdata/"
 

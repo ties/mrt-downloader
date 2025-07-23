@@ -148,7 +148,7 @@ def index_files_for_rrcs(
     """
     # align to first day of the month at 00:00
     start_time = start_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    index_urls = []
+    index_urls: list[CollectorIndexEntry] = []
 
     for rrc in rrcs:
         now = start_time
@@ -174,7 +174,7 @@ async def process_rrc_index(
     session: aiohttp.ClientSession, entry: CollectorIndexEntry
 ) -> list[CollectorFileEntry]:
     """Download the relevant indices for the given RRC and yield the updates in the interval."""
-    result = []
+    result: list[CollectorFileEntry] = []
     async with session.get(entry.url) as response:
         if response.status != 200:
             click.echo(f"Skipping {entry.url} due to HTTP error {response.status}")
@@ -207,7 +207,7 @@ class AnchorTagParser(HTMLParser):
         self.extensions = frozenset(extensions)
         self.links = []
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         """Handle open tags."""
         if tag == "a":
             for attr in attrs:
