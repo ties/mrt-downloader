@@ -1,3 +1,7 @@
+## v0.0.x:
+
+  * remove special case for route-views2 collector url (thanks Hans and team for the symlink!)
+
 ## v0.0.4:
 
   * Re-add python 3.11 support (previous release had 3.13 requirement by accident)

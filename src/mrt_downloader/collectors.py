@@ -53,13 +53,7 @@ async def get_ripe_ris_collectors(
 def parse_routeviews_collectors(obj: dict[str, dict]) -> list[CollectorInfo]:
     collectors = []
     for collector in obj["results"]:
-        match collector["name"]:
-            case "route-views2":
-                base_url = "https://archive.routeviews.org/bgpdata/"
-            case _:
-                base_url = (
-                    f"https://archive.routeviews.org/{collector['name']}/bgpdata/"
-                )
+        base_url = f"https://archive.routeviews.org/{collector['name']}/bgpdata/"
 
         collectors.append(
             CollectorInfo(
