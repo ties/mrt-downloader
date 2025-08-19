@@ -32,7 +32,7 @@ class ByCollectorPartitionedStategy(FileNamingStrategy):
 
         return self.inner_strategy.get_path(inner_base, entry)
 
-    def parse(self, path: Sequence[pathlib.Path]) -> dict[str, str]:
+    def parse(self, path: Sequence[str | pathlib.Path]) -> dict[str, str]:
         return {
             "collector": str(path[0]),
             **self.inner_strategy.parse(path[1:]),
@@ -43,7 +43,7 @@ class IdentityStrategy(FileNamingStrategy):
     def get_path(self, path: pathlib.Path, entry: CollectorFileEntry) -> pathlib.Path:
         return path / entry.filename
 
-    def parse(self, path: Sequence[pathlib.Path]) -> dict[str, str]:
+    def parse(self, path: Sequence[str | pathlib.Path]) -> dict[str, str]:
         return {
             "filename": str(path[0]),
         }
@@ -53,7 +53,7 @@ class ByCollectorStrategy(FileNamingStrategy):
     def get_path(self, path: pathlib.Path, entry: CollectorFileEntry) -> pathlib.Path:
         return path / entry.collector.name.lower() / entry.filename
 
-    def parse(self, path: Sequence[pathlib.Path]) -> dict[str, str]:
+    def parse(self, path: Sequence[str | pathlib.Path]) -> dict[str, str]:
         return {
             "collector": str(path[0]),
             "filename": str(path[1]),
@@ -64,7 +64,7 @@ class ByMonthStrategy(FileNamingStrategy):
     def get_path(self, path: pathlib.Path, entry: CollectorFileEntry) -> pathlib.Path:
         return path / entry.date.strftime("%Y.%m") / entry.filename
 
-    def parse(self, path: Sequence[pathlib.Path]) -> dict[str, str]:
+    def parse(self, path: Sequence[str | pathlib.Path]) -> dict[str, str]:
         year, month = str(path[0]).split(".")
         return {
             "year": year,
@@ -77,7 +77,7 @@ class ByDayStrategy(FileNamingStrategy):
     def get_path(self, path: pathlib.Path, entry: CollectorFileEntry) -> pathlib.Path:
         return path / entry.date.strftime("%Y.%m.%d") / entry.filename
 
-    def parse(self, path: Sequence[pathlib.Path]) -> dict[str, str]:
+    def parse(self, path: Sequence[str | pathlib.Path]) -> dict[str, str]:
         year, month, day = str(path[0]).split(".")
         return {
             "year": year,
@@ -96,7 +96,7 @@ class ByHourStrategy(FileNamingStrategy):
             / entry.filename
         )
 
-    def parse(self, path: Sequence[pathlib.Path]) -> dict[str, str]:
+    def parse(self, path: Sequence[str | pathlib.Path]) -> dict[str, str]:
         year, month, day = str(path[0]).split(".")
         return {
             "year": year,
@@ -111,7 +111,7 @@ class PrefixCollectorStrategy(FileNamingStrategy):
     def get_path(self, path: pathlib.Path, entry: CollectorFileEntry) -> pathlib.Path:
         return path / f"{entry.collector.name.lower()}-{entry.filename}"
 
-    def parse(self, path: Sequence[pathlib.Path]) -> dict[str, str]:
+    def parse(self, path: Sequence[str | pathlib.Path]) -> dict[str, str]:
         collector, filename = split_on_dash_except_route_views(str(path[0]))
         return {
             "collector": collector,
@@ -128,7 +128,7 @@ class PrefixCollectorByHourStrategy(FileNamingStrategy):
             / f"{entry.collector.name.lower()}-{entry.filename}"
         )
 
-    def parse(self, path: Sequence[pathlib.Path]) -> dict[str, str]:
+    def parse(self, path: Sequence[str | pathlib.Path]) -> dict[str, str]:
         assert len(path) == 3, (
             "Expected path to have 3 components: year.month.day, hour, filename"
         )
