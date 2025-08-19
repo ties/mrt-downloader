@@ -65,6 +65,26 @@ def test_prefix_collector() -> None:
     }
 
 
+def test_string_arguments() -> None:
+    """Test paths that are partitioned by year-month + hour, filename prefixed by collector."""
+    chicago = [
+        "2025.07.14",
+        "23",
+        "route-views.chicago-updates.20250714.2345.bz2",
+    ]
+
+    strategy = PrefixCollectorByHourStrategy()
+
+    assert strategy.parse(chicago) == {
+        "collector": "route-views.chicago",
+        "year": "2025",
+        "month": "07",
+        "day": "14",
+        "hour": "23",
+        "filename": "updates.20250714.2345.bz2",
+    }
+
+
 def test_collector_by_hour() -> None:
     """Test paths that are partitioned by year-month + hour, filename prefixed by collector."""
     chicago = [
