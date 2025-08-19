@@ -1,5 +1,9 @@
-## v0.0.x:
+## v0.0.5:
 
+  * add routeviews support
+  * add multiple file partitioning strategies
+  * add parsing utility for paths, to get variables from it (see
+    `src/tests/files_test.py`)
   * remove special case for route-views2 collector url (thanks Hans and team for the symlink!)
 
 ## v0.0.4:
