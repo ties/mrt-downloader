@@ -122,7 +122,7 @@ class FileNamingStrategy(ABC):
         pass
 
     @abstractmethod
-    def parse(self, path: Sequence[Path]) -> dict[str, str]:
+    def parse(self, path: Sequence[Path | str]) -> dict[str, str]:
         pass
 
 
