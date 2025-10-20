@@ -1,3 +1,9 @@
+## v0.0.6:
+
+  * Assume that the filename follows the conventions, and parse day/hour/minute
+    where possible.
+
+
 ## v0.0.5:
 
   * add routeviews support
