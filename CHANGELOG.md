@@ -1,5 +1,7 @@
 ## v0.0.6:
 
+  * CI/CD: workflow now required for merge (missing workflow was allowed
+    beforehand)
   * Python 3.14 in CI/CD
   * Assume that the filename follows the conventions, and parse [day/hour/minute](day/hour/minute)
     where possible.
