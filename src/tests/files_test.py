@@ -36,6 +36,9 @@ def test_collector_partitioned_yearmonth() -> None:
         "collector": "route-views.chicago",
         "year": "2025",
         "month": "07",
+        "day": "14",
+        "hour": "23",
+        "minute": "45",
         "filename": "updates.20250714.2345.bz2",
     }
 
@@ -43,6 +46,9 @@ def test_collector_partitioned_yearmonth() -> None:
         "collector": "route-views.rio",
         "year": "2025",
         "month": "07",
+        "day": "14",
+        "hour": "23",
+        "minute": "45",
         "filename": "updates.20250714.2345.bz2",
     }
 
@@ -81,6 +87,7 @@ def test_string_arguments() -> None:
         "month": "07",
         "day": "14",
         "hour": "23",
+        "minute": "45",
         "filename": "updates.20250714.2345.bz2",
     }
 
@@ -106,6 +113,7 @@ def test_collector_by_hour() -> None:
         "month": "07",
         "day": "14",
         "hour": "23",
+        "minute": "45",
         "filename": "updates.20250714.2345.bz2",
     }
 
@@ -115,5 +123,6 @@ def test_collector_by_hour() -> None:
         "month": "06",
         "day": "13",
         "hour": "22",
+        "minute": "45",
         "filename": "updates.20250613.2245.bz2",
     }
