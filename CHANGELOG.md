@@ -1,7 +1,8 @@
 ## v0.0.6:
 
-  * Assume that the filename follows the conventions, and parse day/hour/minute
+  * Assume that the filename follows the conventions, and parse [day/hour/minute](day/hour/minute)
     where possible.
+  * Use newer aiohttp version
 
 
 ## v0.0.5:

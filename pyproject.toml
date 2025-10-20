@@ -7,8 +7,8 @@ requires-python = ">=3.11"
 readme = "README.md"
 packages = [{include = "mrt_downloader"}]
 dependencies = [
-    "aiohttp>=3.12.14",
-    "click>=8.2",
+    "aiohttp>=3.13.1",
+    "click>=8.3",
     "typing-extensions>=4.14.1",
 ]
 
@@ -16,7 +16,7 @@ dependencies = [
 mrt-downloader = "mrt_downloader.cli:cli"
 
 [build-system]
-requires = ["uv_build>=0.7.8,<0.9.0"]
+requires = ["uv_build>=0.7.8,<0.10.0"]
 build-backend = "uv_build"
 
 [tool.isort]
