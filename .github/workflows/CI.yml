@@ -39,7 +39,7 @@ jobs:
           enable-cache: true
           python-version: "${{ matrix.python }}"
 
-      - nae: Test
+      - name: Test
         run: uv run pytest
 
 
