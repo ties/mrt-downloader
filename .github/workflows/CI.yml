@@ -29,7 +29,7 @@ jobs:
             target: aarch64
         python:
           - 3.11
-          - 3.13
+          - 3.14
     steps:
       - uses: actions/checkout@v4
 
@@ -37,16 +37,9 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+          python-version: "${{ matrix.python }}"
 
-      - name: Set up python-version
-        run: echo ${{ matrix.python }} > .python-version
-
-      - name: "Set up Python"
-        uses: actions/setup-python@v5
-        with:
-          python-version-file: ".python-version"
-
-      - name: Test
+      - nae: Test
         run: uv run pytest
 
 
@@ -71,11 +64,6 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-
-      - name: "Set up Python"
-        uses: actions/setup-python@v5
-        with:
-          python-version-file: ".python-version"
 
       - name: Build
         # build artifacts are in dist/
