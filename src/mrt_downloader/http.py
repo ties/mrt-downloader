@@ -12,6 +12,7 @@ from typing import Iterable, Literal, Sequence
 import aiohttp
 from aiohttp import ClientTimeout
 
+from mrt_downloader.cache import get_cached_index, get_month_end_date, store_index
 from mrt_downloader.collector_index import (
     process_index_entry,
 )
@@ -226,17 +227,20 @@ class IndexWorker:
     queue: asyncio.Queue[CollectorIndexEntry]
     results: list[CollectorFileEntry] = []
     file_types: frozenset[Literal["rib", "update"]]
+    db_path: Path | None
 
     def __init__(
         self,
         session: aiohttp.ClientSession,
         queue: asyncio.Queue[CollectorIndexEntry],
         file_types: Iterable[Literal["rib", "update"]] = frozenset(("rib", "update")),
+        db_path: Path | None = None,
     ):
         self.session = session
         self.queue = queue
         self.results = []
         self.file_types = frozenset(file_types)
+        self.db_path = db_path
 
     async def run(self) -> int:
         processed = 0
@@ -254,19 +258,50 @@ class IndexWorker:
 
             processed += 1
             try:
-                async with self.session.get(index_entry.url) as response:
-                    if response.status != 200:
-                        LOG.error(
-                            "Failed to download index %s: HTTP %d for %s",
-                            index_entry.url,
-                            response.status,
-                            index_entry.collector,
-                        )
-                        continue
+                # Calculate the month end date for this index
+                month_end_date = get_month_end_date(
+                    index_entry.time_period.year,
+                    index_entry.time_period.month
+                )
 
+                # Try to get cached content
+                cached_content = await get_cached_index(
+                    index_entry.url,
+                    month_end_date,
+                    self.db_path
+                )
+
+                if cached_content is not None:
+                    # Use cached content
+                    LOG.info(f"Using cached index for {index_entry.url}")
                     self.results.extend(
-                        process_index_entry(index_entry, await response.text())
+                        process_index_entry(index_entry, cached_content)
                     )
+                else:
+                    # Download fresh content
+                    async with self.session.get(index_entry.url) as response:
+                        if response.status != 200:
+                            LOG.error(
+                                "Failed to download index %s: HTTP %d for %s",
+                                index_entry.url,
+                                response.status,
+                                index_entry.collector,
+                            )
+                            continue
+
+                        content = await response.text()
+
+                        # Store in cache
+                        await store_index(
+                            index_entry.url,
+                            content,
+                            month_end_date,
+                            self.db_path
+                        )
+
+                        self.results.extend(
+                            process_index_entry(index_entry, content)
+                        )
             except Exception as e:
                 LOG.error(e)
             finally:

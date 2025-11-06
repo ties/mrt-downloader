@@ -9,6 +9,7 @@ from typing import Any, Literal
 import aiohttp
 import click
 
+from mrt_downloader.cache import get_cache_db_path, init_cache_db
 from mrt_downloader.collector_index import (
     index_files_for_collector,
 )
@@ -42,6 +43,11 @@ async def download_files(
     assert start_time.tzinfo == datetime.UTC, "Start time must be in UTC"
     assert end_time.tzinfo == datetime.UTC, "End time must be in UTC"
     assert start_time < end_time, "Start time must be before end time"
+
+    # Initialize cache database
+    db_path = get_cache_db_path()
+    await init_cache_db(db_path)
+    LOG.info(f"Initialized index cache at {db_path}")
 
     file_types = frozenset(
         ["rib"] if rib_only else ["update"] if update_only else ["rib", "update"]
@@ -96,7 +102,7 @@ async def download_files(
         for idx in indices:
             index_queue.put_nowait(idx)
 
-        index_worker = IndexWorker(session, index_queue)
+        index_worker = IndexWorker(session, index_queue, file_types=file_types, db_path=db_path)
         # run num_workers workers to get the indices.
         status = await asyncio.gather(*[index_worker.run() for _ in range(num_workers)])
 
