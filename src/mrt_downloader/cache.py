@@ -6,6 +6,8 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from mrt_downloader.models import CollectorFileEntry, CollectorInfo
+
 logger = logging.getLogger(__name__)
 
 # Cache refresh threshold: only refresh indexes for months that ended less than this many seconds ago
@@ -27,6 +29,10 @@ def get_cache_db_path() -> Path:
 async def init_cache_db(db_path: Optional[Path] = None) -> None:
     """Initialize the cache database and create tables if they don't exist.
 
+    Creates two tables:
+    - index_cache: Tracks which indexes have been downloaded and when
+    - file_cache: Stores the parsed CollectorFileEntry objects for each index
+
     Args:
         db_path: Path to the database file. If None, uses default cache path.
     """
@@ -34,14 +40,38 @@ async def init_cache_db(db_path: Optional[Path] = None) -> None:
         db_path = get_cache_db_path()
 
     async with aiosqlite.connect(db_path) as db:
+        # Table for tracking processed indexes
         await db.execute("""
             CREATE TABLE IF NOT EXISTS index_cache (
                 url TEXT PRIMARY KEY,
-                content TEXT NOT NULL,
                 downloaded_at INTEGER NOT NULL,
                 month_end_date TEXT NOT NULL
             )
         """)
+
+        # Table for storing parsed file entries
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS file_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                index_url TEXT NOT NULL,
+                collector_name TEXT NOT NULL,
+                collector_project TEXT NOT NULL,
+                collector_base_url TEXT NOT NULL,
+                collector_installed TEXT NOT NULL,
+                collector_removed TEXT,
+                filename TEXT NOT NULL,
+                file_url TEXT NOT NULL,
+                file_type TEXT,
+                FOREIGN KEY (index_url) REFERENCES index_cache(url) ON DELETE CASCADE
+            )
+        """)
+
+        # Index for faster lookups
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_file_cache_index_url
+            ON file_cache(index_url)
+        """)
+
         await db.commit()
 
     logger.debug(f"Initialized cache database at {db_path}")
@@ -80,8 +110,8 @@ async def get_cached_index(
     url: str,
     month_end_date: datetime.datetime,
     db_path: Optional[Path] = None
-) -> Optional[str]:
-    """Get a cached index if it exists and is still valid.
+) -> Optional[list[CollectorFileEntry]]:
+    """Get cached file entries for an index if they exist and are still valid.
 
     Args:
         url: The index URL to look up
@@ -89,7 +119,7 @@ async def get_cached_index(
         db_path: Path to the database file. If None, uses default cache path.
 
     Returns:
-        The cached HTML content if valid, None otherwise
+        List of CollectorFileEntry objects if valid cache exists, None otherwise
     """
     if db_path is None:
         db_path = get_cache_db_path()
@@ -101,35 +131,76 @@ async def get_cached_index(
 
     try:
         async with aiosqlite.connect(db_path) as db:
+            # Check if the index is in cache
             async with db.execute(
-                "SELECT content, downloaded_at FROM index_cache WHERE url = ?",
+                "SELECT downloaded_at FROM index_cache WHERE url = ?",
                 (url,)
             ) as cursor:
                 row = await cursor.fetchone()
-                if row:
-                    content, downloaded_at = row
-                    logger.info(f"Using cached index for {url} (downloaded at {downloaded_at})")
-                    return content
+                if not row:
+                    logger.debug(f"No cache entry found for {url}")
+                    return None
+
+                downloaded_at = row[0]
+                logger.info(f"Using cached index for {url} (downloaded at {downloaded_at})")
+
+            # Retrieve all file entries for this index
+            async with db.execute(
+                """
+                SELECT collector_name, collector_project, collector_base_url,
+                       collector_installed, collector_removed,
+                       filename, file_url, file_type
+                FROM file_cache
+                WHERE index_url = ?
+                """,
+                (url,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+                file_entries = []
+                for row in rows:
+                    (collector_name, collector_project, collector_base_url,
+                     collector_installed, collector_removed,
+                     filename, file_url, file_type) = row
+
+                    # Reconstruct CollectorInfo
+                    collector = CollectorInfo(
+                        name=collector_name,
+                        project=collector_project,
+                        base_url=collector_base_url,
+                        installed=datetime.datetime.fromisoformat(collector_installed),
+                        removed=datetime.datetime.fromisoformat(collector_removed) if collector_removed else None
+                    )
+
+                    # Reconstruct CollectorFileEntry
+                    file_entry = CollectorFileEntry(
+                        collector=collector,
+                        filename=filename,
+                        url=file_url,
+                        file_type=file_type
+                    )
+                    file_entries.append(file_entry)
+
+                logger.debug(f"Retrieved {len(file_entries)} file entries from cache for {url}")
+                return file_entries
+
     except Exception as e:
         # If the database doesn't exist or there's an error, just return None
         logger.debug(f"Cache lookup failed for {url}: {e}")
         return None
 
-    logger.debug(f"No cache entry found for {url}")
-    return None
-
 
 async def store_index(
     url: str,
-    content: str,
+    file_entries: list[CollectorFileEntry],
     month_end_date: datetime.datetime,
     db_path: Optional[Path] = None
 ) -> None:
-    """Store an index in the cache.
+    """Store parsed file entries for an index in the cache.
 
     Args:
         url: The index URL
-        content: The HTML content to cache
+        file_entries: List of CollectorFileEntry objects parsed from the index
         month_end_date: The last day of the month this index represents
         db_path: Path to the database file. If None, uses default cache path.
     """
@@ -144,16 +215,47 @@ async def store_index(
 
     try:
         async with aiosqlite.connect(db_path) as db:
+            # Store index metadata
             await db.execute(
                 """
-                INSERT OR REPLACE INTO index_cache (url, content, downloaded_at, month_end_date)
-                VALUES (?, ?, ?, ?)
+                INSERT OR REPLACE INTO index_cache (url, downloaded_at, month_end_date)
+                VALUES (?, ?, ?)
                 """,
-                (url, content, now, month_end_str)
+                (url, now, month_end_str)
             )
+
+            # Delete old file entries for this index (if replacing)
+            await db.execute(
+                "DELETE FROM file_cache WHERE index_url = ?",
+                (url,)
+            )
+
+            # Store all file entries
+            for entry in file_entries:
+                await db.execute(
+                    """
+                    INSERT INTO file_cache (
+                        index_url, collector_name, collector_project, collector_base_url,
+                        collector_installed, collector_removed,
+                        filename, file_url, file_type
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        url,
+                        entry.collector.name,
+                        entry.collector.project,
+                        entry.collector.base_url,
+                        entry.collector.installed.isoformat(),
+                        entry.collector.removed.isoformat() if entry.collector.removed else None,
+                        entry.filename,
+                        entry.url,
+                        entry.file_type
+                    )
+                )
+
             await db.commit()
 
-        logger.debug(f"Stored index cache for {url}")
+        logger.debug(f"Stored {len(file_entries)} file entries in cache for {url}")
     except Exception as e:
         # Log but don't fail if caching fails
         logger.warning(f"Failed to store index cache for {url}: {e}")

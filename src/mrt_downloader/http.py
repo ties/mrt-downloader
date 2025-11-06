@@ -264,21 +264,19 @@ class IndexWorker:
                     index_entry.time_period.month
                 )
 
-                # Try to get cached content
-                cached_content = await get_cached_index(
+                # Try to get cached file entries
+                cached_entries = await get_cached_index(
                     index_entry.url,
                     month_end_date,
                     self.db_path
                 )
 
-                if cached_content is not None:
-                    # Use cached content
-                    LOG.info(f"Using cached index for {index_entry.url}")
-                    self.results.extend(
-                        process_index_entry(index_entry, cached_content)
-                    )
+                if cached_entries is not None:
+                    # Use cached file entries
+                    LOG.info(f"Using cached index for {index_entry.url} ({len(cached_entries)} files)")
+                    self.results.extend(cached_entries)
                 else:
-                    # Download fresh content
+                    # Download and parse fresh content
                     async with self.session.get(index_entry.url) as response:
                         if response.status != 200:
                             LOG.error(
@@ -291,17 +289,18 @@ class IndexWorker:
 
                         content = await response.text()
 
-                        # Store in cache
+                        # Parse the index
+                        file_entries = process_index_entry(index_entry, content)
+
+                        # Store parsed entries in cache
                         await store_index(
                             index_entry.url,
-                            content,
+                            file_entries,
                             month_end_date,
                             self.db_path
                         )
 
-                        self.results.extend(
-                            process_index_entry(index_entry, content)
-                        )
+                        self.results.extend(file_entries)
             except Exception as e:
                 LOG.error(e)
             finally:

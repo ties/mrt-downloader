@@ -14,6 +14,7 @@ from mrt_downloader.cache import (
     should_refresh_index,
     store_index,
 )
+from mrt_downloader.models import CollectorFileEntry, CollectorInfo
 
 
 @pytest.mark.asyncio
@@ -27,22 +28,51 @@ async def test_init_cache_db():
 
 @pytest.mark.asyncio
 async def test_store_and_retrieve_index():
-    """Test storing and retrieving an index from the cache."""
+    """Test storing and retrieving file entries from the cache."""
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "test.db"
         await init_cache_db(db_path)
 
         url = "https://example.com/2023.01/"
-        content = "<html><body>Test content</body></html>"
         # Use an old month that won't be refreshed
         month_end_date = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
 
-        # Store the index
-        await store_index(url, content, month_end_date, db_path)
+        # Create test data
+        collector = CollectorInfo(
+            name="RRC00",
+            project="ris",
+            base_url="https://data.ris.ripe.net/rrc00/",
+            installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
+            removed=None
+        )
 
-        # Retrieve it
-        cached_content = await get_cached_index(url, month_end_date, db_path)
-        assert cached_content == content
+        file_entries = [
+            CollectorFileEntry(
+                collector=collector,
+                filename="updates.20230115.0000.gz",
+                url="https://data.ris.ripe.net/rrc00/2023.01/updates.20230115.0000.gz",
+                file_type="update"
+            ),
+            CollectorFileEntry(
+                collector=collector,
+                filename="bview.20230101.0000.gz",
+                url="https://data.ris.ripe.net/rrc00/2023.01/bview.20230101.0000.gz",
+                file_type="rib"
+            ),
+        ]
+
+        # Store the file entries
+        await store_index(url, file_entries, month_end_date, db_path)
+
+        # Retrieve them
+        cached_entries = await get_cached_index(url, month_end_date, db_path)
+        assert cached_entries is not None
+        assert len(cached_entries) == 2
+        assert cached_entries[0].filename == "updates.20230115.0000.gz"
+        assert cached_entries[0].file_type == "update"
+        assert cached_entries[1].filename == "bview.20230101.0000.gz"
+        assert cached_entries[1].file_type == "rib"
+        assert cached_entries[0].collector.name == "RRC00"
 
 
 @pytest.mark.asyncio
@@ -56,29 +86,46 @@ async def test_cache_miss():
         month_end_date = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
 
         # Try to retrieve without storing
-        cached_content = await get_cached_index(url, month_end_date, db_path)
-        assert cached_content is None
+        cached_entries = await get_cached_index(url, month_end_date, db_path)
+        assert cached_entries is None
 
 
 @pytest.mark.asyncio
 async def test_recent_month_not_cached():
-    """Test that recent months are not cached."""
+    """Test that recent months are not retrieved from cache."""
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "test.db"
         await init_cache_db(db_path)
 
         url = "https://example.com/2025.11/"
-        content = "<html><body>Recent content</body></html>"
         # Use the current month (which is recent)
         now = datetime.datetime.now(datetime.timezone.utc)
         month_end_date = get_month_end_date(now.year, now.month)
 
-        # Store the index
-        await store_index(url, content, month_end_date, db_path)
+        # Create test data
+        collector = CollectorInfo(
+            name="RRC00",
+            project="ris",
+            base_url="https://data.ris.ripe.net/rrc00/",
+            installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
+            removed=None
+        )
+
+        file_entries = [
+            CollectorFileEntry(
+                collector=collector,
+                filename="updates.20251101.0000.gz",
+                url="https://data.ris.ripe.net/rrc00/2025.11/updates.20251101.0000.gz",
+                file_type="update"
+            ),
+        ]
+
+        # Store the file entries
+        await store_index(url, file_entries, month_end_date, db_path)
 
         # Try to retrieve it - should return None because the month is recent
-        cached_content = await get_cached_index(url, month_end_date, db_path)
-        assert cached_content is None
+        cached_entries = await get_cached_index(url, month_end_date, db_path)
+        assert cached_entries is None
 
 
 def test_should_refresh_index_recent():
@@ -131,13 +178,32 @@ async def test_auto_init_on_store():
         # Don't call init_cache_db
 
         url = "https://example.com/2023.01/"
-        content = "<html><body>Test content</body></html>"
         month_end_date = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
 
+        # Create test data
+        collector = CollectorInfo(
+            name="RRC00",
+            project="ris",
+            base_url="https://data.ris.ripe.net/rrc00/",
+            installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
+            removed=None
+        )
+
+        file_entries = [
+            CollectorFileEntry(
+                collector=collector,
+                filename="updates.20230115.0000.gz",
+                url="https://data.ris.ripe.net/rrc00/2023.01/updates.20230115.0000.gz",
+                file_type="update"
+            ),
+        ]
+
         # Store should auto-initialize
-        await store_index(url, content, month_end_date, db_path)
+        await store_index(url, file_entries, month_end_date, db_path)
         assert db_path.exists()
 
         # Should be able to retrieve it
-        cached_content = await get_cached_index(url, month_end_date, db_path)
-        assert cached_content == content
+        cached_entries = await get_cached_index(url, month_end_date, db_path)
+        assert cached_entries is not None
+        assert len(cached_entries) == 1
+        assert cached_entries[0].filename == "updates.20230115.0000.gz"
