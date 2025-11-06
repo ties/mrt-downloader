@@ -8,10 +8,13 @@ import pytest
 
 from mrt_downloader.cache import (
     CACHE_REFRESH_THRESHOLD_SECONDS,
+    COLLECTOR_CACHE_REFRESH_THRESHOLD_SECONDS,
+    get_cached_collectors,
     get_cached_index,
     get_month_end_date,
     init_cache_db,
     should_refresh_index,
+    store_collectors,
     store_index,
 )
 from mrt_downloader.models import CollectorFileEntry, CollectorInfo
@@ -65,7 +68,7 @@ async def test_store_and_retrieve_index():
         await store_index(url, file_entries, month_end_date, db_path)
 
         # Retrieve them
-        cached_entries = await get_cached_index(url, month_end_date, db_path)
+        cached_entries = await get_cached_index(url, month_end_date, db_path=db_path)
         assert cached_entries is not None
         assert len(cached_entries) == 2
         assert cached_entries[0].filename == "updates.20230115.0000.gz"
@@ -86,7 +89,7 @@ async def test_cache_miss():
         month_end_date = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
 
         # Try to retrieve without storing
-        cached_entries = await get_cached_index(url, month_end_date, db_path)
+        cached_entries = await get_cached_index(url, month_end_date, db_path=db_path)
         assert cached_entries is None
 
 
@@ -124,7 +127,7 @@ async def test_recent_month_not_cached():
         await store_index(url, file_entries, month_end_date, db_path)
 
         # Try to retrieve it - should return None because the month is recent
-        cached_entries = await get_cached_index(url, month_end_date, db_path)
+        cached_entries = await get_cached_index(url, month_end_date, db_path=db_path)
         assert cached_entries is None
 
 
@@ -203,7 +206,125 @@ async def test_auto_init_on_store():
         assert db_path.exists()
 
         # Should be able to retrieve it
-        cached_entries = await get_cached_index(url, month_end_date, db_path)
+        cached_entries = await get_cached_index(url, month_end_date, db_path=db_path)
         assert cached_entries is not None
         assert len(cached_entries) == 1
         assert cached_entries[0].filename == "updates.20230115.0000.gz"
+
+
+@pytest.mark.asyncio
+async def test_store_and_retrieve_collectors():
+    """Test storing and retrieving collectors from the cache."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        await init_cache_db(db_path)
+
+        project = "ris"
+        collectors = [
+            CollectorInfo(
+                name="RRC00",
+                project="ris",
+                base_url="https://data.ris.ripe.net/rrc00/",
+                installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
+                removed=None
+            ),
+            CollectorInfo(
+                name="RRC01",
+                project="ris",
+                base_url="https://data.ris.ripe.net/rrc01/",
+                installed=datetime.datetime(2001, 5, 1, tzinfo=datetime.timezone.utc),
+                removed=None
+            ),
+        ]
+
+        # Store collectors
+        await store_collectors(project, collectors, db_path)
+
+        # Retrieve them
+        cached = await get_cached_collectors(project, db_path=db_path)
+        assert cached is not None
+        assert len(cached) == 2
+        assert cached[0].name == "RRC00"
+        assert cached[1].name == "RRC01"
+        assert cached[0].project == "ris"
+
+
+@pytest.mark.asyncio
+async def test_collector_cache_miss():
+    """Test that a collector cache miss returns None."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        await init_cache_db(db_path)
+
+        # Try to retrieve without storing
+        cached = await get_cached_collectors("ris", db_path=db_path)
+        assert cached is None
+
+
+@pytest.mark.asyncio
+async def test_collector_force_refresh():
+    """Test that force_refresh bypasses collector cache."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        await init_cache_db(db_path)
+
+        project = "ris"
+        collectors = [
+            CollectorInfo(
+                name="RRC00",
+                project="ris",
+                base_url="https://data.ris.ripe.net/rrc00/",
+                installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
+                removed=None
+            ),
+        ]
+
+        # Store collectors
+        await store_collectors(project, collectors, db_path)
+
+        # Should get from cache normally
+        cached = await get_cached_collectors(project, db_path=db_path)
+        assert cached is not None
+
+        # Should NOT get from cache with force_refresh
+        cached = await get_cached_collectors(project, force_refresh=True, db_path=db_path)
+        assert cached is None
+
+
+@pytest.mark.asyncio
+async def test_index_force_refresh():
+    """Test that force_refresh bypasses index cache."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        await init_cache_db(db_path)
+
+        url = "https://example.com/2023.01/"
+        month_end_date = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
+
+        collector = CollectorInfo(
+            name="RRC00",
+            project="ris",
+            base_url="https://data.ris.ripe.net/rrc00/",
+            installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
+            removed=None
+        )
+
+        file_entries = [
+            CollectorFileEntry(
+                collector=collector,
+                filename="updates.20230115.0000.gz",
+                url="https://data.ris.ripe.net/rrc00/2023.01/updates.20230115.0000.gz",
+                file_type="update"
+            ),
+        ]
+
+        # Store the file entries
+        await store_index(url, file_entries, month_end_date, db_path)
+
+        # Should get from cache normally
+        cached = await get_cached_index(url, month_end_date, db_path=db_path)
+        assert cached is not None
+
+        # Should NOT get from cache with force_refresh
+        cached = await get_cached_index(url, month_end_date, force_refresh=True, db_path=db_path)
+        assert cached is None

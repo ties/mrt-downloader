@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 # Default: 7 days = 7 * 24 * 60 * 60 seconds
 CACHE_REFRESH_THRESHOLD_SECONDS = 7 * 24 * 60 * 60
 
+# Collector cache refresh threshold: refresh collector list if cached for longer than this
+# Default: 24 hours = 24 * 60 * 60 seconds
+COLLECTOR_CACHE_REFRESH_THRESHOLD_SECONDS = 24 * 60 * 60
+
 
 def get_cache_db_path() -> Path:
     """Get the path to the SQLite cache database.
@@ -29,7 +33,8 @@ def get_cache_db_path() -> Path:
 async def init_cache_db(db_path: Optional[Path] = None) -> None:
     """Initialize the cache database and create tables if they don't exist.
 
-    Creates two tables:
+    Creates three tables:
+    - collector_cache: Stores collector information (cached for 24h)
     - index_cache: Tracks which indexes have been downloaded and when
     - file_cache: Stores the parsed CollectorFileEntry objects for each index
 
@@ -40,6 +45,19 @@ async def init_cache_db(db_path: Optional[Path] = None) -> None:
         db_path = get_cache_db_path()
 
     async with aiosqlite.connect(db_path) as db:
+        # Table for storing collectors (cached for 24h)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS collector_cache (
+                project TEXT NOT NULL,
+                name TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                installed TEXT NOT NULL,
+                removed TEXT,
+                cached_at INTEGER NOT NULL,
+                PRIMARY KEY (project, name)
+            )
+        """)
+
         # Table for tracking processed indexes
         await db.execute("""
             CREATE TABLE IF NOT EXISTS index_cache (
@@ -109,6 +127,7 @@ def should_refresh_index(month_end_date: datetime.datetime) -> bool:
 async def get_cached_index(
     url: str,
     month_end_date: datetime.datetime,
+    force_refresh: bool = False,
     db_path: Optional[Path] = None
 ) -> Optional[list[CollectorFileEntry]]:
     """Get cached file entries for an index if they exist and are still valid.
@@ -116,11 +135,16 @@ async def get_cached_index(
     Args:
         url: The index URL to look up
         month_end_date: The last day of the month this index represents
+        force_refresh: If True, ignore cache and return None
         db_path: Path to the database file. If None, uses default cache path.
 
     Returns:
         List of CollectorFileEntry objects if valid cache exists, None otherwise
     """
+    if force_refresh:
+        logger.debug(f"Force refresh enabled, skipping cache for {url}")
+        return None
+
     if db_path is None:
         db_path = get_cache_db_path()
 
@@ -279,3 +303,125 @@ def get_month_end_date(year: int, month: int) -> datetime.datetime:
 
     last_moment = next_month - datetime.timedelta(seconds=1)
     return last_moment
+
+
+async def get_cached_collectors(
+    project: str,
+    force_refresh: bool = False,
+    db_path: Optional[Path] = None
+) -> Optional[list[CollectorInfo]]:
+    """Get cached collectors for a project if they exist and are still valid.
+
+    Args:
+        project: The project name ("ris" or "routeviews")
+        force_refresh: If True, ignore cache and return None
+        db_path: Path to the database file. If None, uses default cache path.
+
+    Returns:
+        List of CollectorInfo objects if valid cache exists, None otherwise
+    """
+    if force_refresh:
+        logger.debug(f"Force refresh enabled, skipping cache for {project} collectors")
+        return None
+
+    if db_path is None:
+        db_path = get_cache_db_path()
+
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            # Get all collectors for this project and check if any are stale
+            async with db.execute(
+                "SELECT name, base_url, installed, removed, cached_at FROM collector_cache WHERE project = ?",
+                (project,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+                if not rows:
+                    logger.debug(f"No cached collectors found for {project}")
+                    return None
+
+                # Check if cache is still fresh (any stale entry invalidates the whole cache)
+                now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+                collectors = []
+
+                for row in rows:
+                    name, base_url, installed_str, removed_str, cached_at = row
+
+                    # Check if this entry is stale
+                    age = now - cached_at
+                    if age > COLLECTOR_CACHE_REFRESH_THRESHOLD_SECONDS:
+                        logger.debug(
+                            f"Collector cache for {project} is stale "
+                            f"(age: {age:.0f}s > {COLLECTOR_CACHE_REFRESH_THRESHOLD_SECONDS}s)"
+                        )
+                        return None
+
+                    # Reconstruct CollectorInfo
+                    collector = CollectorInfo(
+                        name=name,
+                        project=project,
+                        base_url=base_url,
+                        installed=datetime.datetime.fromisoformat(installed_str),
+                        removed=datetime.datetime.fromisoformat(removed_str) if removed_str else None
+                    )
+                    collectors.append(collector)
+
+                logger.info(f"Using {len(collectors)} cached collectors for {project}")
+                return collectors
+
+    except Exception as e:
+        logger.debug(f"Collector cache lookup failed for {project}: {e}")
+        return None
+
+
+async def store_collectors(
+    project: str,
+    collectors: list[CollectorInfo],
+    db_path: Optional[Path] = None
+) -> None:
+    """Store collectors in the cache.
+
+    Args:
+        project: The project name ("ris" or "routeviews")
+        collectors: List of CollectorInfo objects to cache
+        db_path: Path to the database file. If None, uses default cache path.
+    """
+    if db_path is None:
+        db_path = get_cache_db_path()
+
+    # Ensure database is initialized
+    await init_cache_db(db_path)
+
+    now = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            # Delete old collectors for this project
+            await db.execute(
+                "DELETE FROM collector_cache WHERE project = ?",
+                (project,)
+            )
+
+            # Store all collectors
+            for collector in collectors:
+                await db.execute(
+                    """
+                    INSERT INTO collector_cache (project, name, base_url, installed, removed, cached_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        project,
+                        collector.name,
+                        collector.base_url,
+                        collector.installed.isoformat(),
+                        collector.removed.isoformat() if collector.removed else None,
+                        now
+                    )
+                )
+
+            await db.commit()
+
+        logger.debug(f"Stored {len(collectors)} collectors in cache for {project}")
+    except Exception as e:
+        # Log but don't fail if caching fails
+        logger.warning(f"Failed to store collector cache for {project}: {e}")
