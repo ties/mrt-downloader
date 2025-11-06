@@ -9,7 +9,12 @@ from typing import Any, Literal
 import aiohttp
 import click
 
-from mrt_downloader.cache import get_cache_db_path, init_cache_db
+from mrt_downloader.cache import (
+    get_cache_db_path,
+    get_cached_collectors,
+    init_cache_db,
+    store_collectors,
+)
 from mrt_downloader.collector_index import (
     index_files_for_collector,
 )
@@ -38,6 +43,7 @@ async def download_files(
     update_only: bool = False,
     collectors: list[str] | None = None,
     project: frozenset[Literal["ris", "routeviews"]] = frozenset(["ris"]),
+    force_cache_refresh: bool = False,
 ):
     """Gather the list of update files per timestamp per rrc and download them."""
     assert start_time.tzinfo == datetime.UTC, "Start time must be in UTC"
@@ -61,17 +67,30 @@ async def download_files(
             )
         )
 
-    # Get the collectors
+    # Get the collectors (from cache or API)
     async with aiohttp.ClientSession() as session:
-        collector_tasks: list[CoroutineType[Any, Any, list[CollectorInfo]]] = []
-        if "ris" in project:
-            collector_tasks.append(get_ripe_ris_collectors(session))
-        if "routeviews" in project:
-            collector_tasks.append(get_routeviews_collectors(session))
+        collector_infos_list: list[list[CollectorInfo]] = []
 
-        collector_infos = list(
-            itertools.chain.from_iterable(await asyncio.gather(*collector_tasks))
-        )
+        for proj in project:
+            # Try to get from cache first
+            cached = await get_cached_collectors(proj, force_cache_refresh, db_path)
+
+            if cached is not None:
+                collector_infos_list.append(cached)
+            else:
+                # Fetch from API
+                if proj == "ris":
+                    infos = await get_ripe_ris_collectors(session)
+                elif proj == "routeviews":
+                    infos = await get_routeviews_collectors(session)
+                else:
+                    infos = []
+
+                # Store in cache
+                await store_collectors(proj, infos, db_path)
+                collector_infos_list.append(infos)
+
+        collector_infos = list(itertools.chain.from_iterable(collector_infos_list))
         # Filter collectors based on the provided list
         collector_infos = [
             collector
@@ -102,7 +121,9 @@ async def download_files(
         for idx in indices:
             index_queue.put_nowait(idx)
 
-        index_worker = IndexWorker(session, index_queue, file_types=file_types, db_path=db_path)
+        index_worker = IndexWorker(
+            session, index_queue, file_types=file_types, db_path=db_path, force_cache_refresh=force_cache_refresh
+        )
         # run num_workers workers to get the indices.
         status = await asyncio.gather(*[index_worker.run() for _ in range(num_workers)])
 

@@ -228,6 +228,7 @@ class IndexWorker:
     results: list[CollectorFileEntry] = []
     file_types: frozenset[Literal["rib", "update"]]
     db_path: Path | None
+    force_cache_refresh: bool
 
     def __init__(
         self,
@@ -235,12 +236,14 @@ class IndexWorker:
         queue: asyncio.Queue[CollectorIndexEntry],
         file_types: Iterable[Literal["rib", "update"]] = frozenset(("rib", "update")),
         db_path: Path | None = None,
+        force_cache_refresh: bool = False,
     ):
         self.session = session
         self.queue = queue
         self.results = []
         self.file_types = frozenset(file_types)
         self.db_path = db_path
+        self.force_cache_refresh = force_cache_refresh
 
     async def run(self) -> int:
         processed = 0
@@ -268,6 +271,7 @@ class IndexWorker:
                 cached_entries = await get_cached_index(
                     index_entry.url,
                     month_end_date,
+                    self.force_cache_refresh,
                     self.db_path
                 )
 

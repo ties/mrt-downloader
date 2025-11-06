@@ -92,6 +92,12 @@ CLICK_DATETIME_TYPE = click.DateTime(
     default=multiprocessing.cpu_count(),
     help="Number of download worker threads",
 )
+@click.option(
+    "--force-cache-refresh",
+    is_flag=True,
+    default=False,
+    help="Force refresh all caches (collectors and indexes), ignoring cached data",
+)
 def cli(
     target_dir: Path,
     create_target: bool,
@@ -107,6 +113,7 @@ def cli(
     rrc: Optional[list[str]] = None,
     rib_only: bool | None = None,
     bview_only: bool | None = None,
+    force_cache_refresh: bool = False,
 ):
     """
     Download a set of BGP updates from RIS.
@@ -232,6 +239,7 @@ def cli(
             num_workers=num_threads,
             naming_strategy=naming_strategy,
             project=frozenset(project),
+            force_cache_refresh=force_cache_refresh,
         )
     )
 
