@@ -96,10 +96,15 @@ async def init_cache_db(db_path: Optional[Path] = None) -> None:
 
 
 def should_refresh_index(month_end_date: datetime.datetime) -> bool:
-    """Check if an index should be refreshed based on how recently the month ended.
+    """Check if an index should be refreshed based on the month it represents.
 
-    An index should be refreshed if the last day of the month is less than
-    CACHE_REFRESH_THRESHOLD_SECONDS ago, as files might still be added.
+    An index should be refreshed (not cached) if:
+    1. It's for the current month (files are still being added), OR
+    2. The month ended less than CACHE_REFRESH_THRESHOLD_SECONDS ago (7 days by default)
+
+    This ensures we get fresh data for:
+    - The current month (always refreshed)
+    - Recent months where files might still be uploaded late
 
     Args:
         month_end_date: The last day of the month (at 23:59:59)
@@ -112,11 +117,27 @@ def should_refresh_index(month_end_date: datetime.datetime) -> bool:
     if month_end_date.tzinfo is None:
         month_end_date = month_end_date.replace(tzinfo=datetime.timezone.utc)
 
+    # Check if this is the current month
+    current_month = (now.year, now.month)
+    index_month = (month_end_date.year, month_end_date.month)
+
+    if index_month == current_month:
+        logger.debug(f"Index is for current month ({month_end_date.year}-{month_end_date.month:02d}), will refresh")
+        return True
+
+    # Check if the month ended recently (within threshold)
     time_since_month_end = (now - month_end_date).total_seconds()
+
+    # If month_end_date is in the future (shouldn't happen with proper usage),
+    # treat it as needing refresh
+    if time_since_month_end < 0:
+        logger.warning(f"Month end date {month_end_date} is in the future, will refresh")
+        return True
+
     should_refresh = time_since_month_end < CACHE_REFRESH_THRESHOLD_SECONDS
 
     logger.debug(
-        f"Month ended {time_since_month_end:.0f}s ago, "
+        f"Month {month_end_date.year}-{month_end_date.month:02d} ended {time_since_month_end:.0f}s ago, "
         f"threshold is {CACHE_REFRESH_THRESHOLD_SECONDS}s, "
         f"should_refresh={should_refresh}"
     )
