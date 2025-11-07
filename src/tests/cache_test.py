@@ -131,8 +131,16 @@ async def test_recent_month_not_cached():
         assert cached_entries is None
 
 
+def test_should_refresh_index_current_month():
+    """Test that the current month should always be refreshed."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    # Get the end of the current month
+    current_month_end = get_month_end_date(now.year, now.month)
+    assert should_refresh_index(current_month_end) is True
+
+
 def test_should_refresh_index_recent():
-    """Test that recent months should be refreshed."""
+    """Test that recent months (ended <7 days ago) should be refreshed."""
     now = datetime.datetime.now(datetime.timezone.utc)
     # A month that ended 3 days ago (less than 7 days)
     recent_end = now - datetime.timedelta(days=3)
