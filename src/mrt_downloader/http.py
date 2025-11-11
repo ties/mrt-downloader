@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Iterable, Literal, Sequence
+from typing import Awaitable, Callable, Iterable, Literal, Sequence, TypeVar
 
 import aiohttp
 from aiohttp import ClientTimeout
@@ -26,6 +26,81 @@ except PackageNotFoundError:
     __version__ = "development"
 
 USER_AGENT = f"mrt-downloader/{__version__} https://github.com/ties/mrt-downloader"
+
+T = TypeVar('T')
+
+
+class RetryHelper:
+    """Helper class for retrying HTTP operations with exponential backoff.
+
+    Implements retry logic with exponential backoff for network operations:
+    - Initial delay: 2 seconds
+    - Backoff multiplier: 2x (2s, 4s, 8s, 16s)
+    - Default max retries: 4
+
+    Retries on network errors (timeouts, connection errors, DNS failures).
+    Does not retry on HTTP 4xx errors (client errors).
+    """
+
+    def __init__(self, max_retries: int = 4, initial_delay: float = 2.0):
+        """Initialize the retry helper.
+
+        Args:
+            max_retries: Maximum number of retry attempts (default: 4)
+            initial_delay: Initial delay in seconds before first retry (default: 2.0)
+        """
+        self.max_retries = max_retries
+        self.initial_delay = initial_delay
+
+    async def execute(
+        self,
+        operation: Callable[[], Awaitable[T]],
+        operation_name: str,
+    ) -> T:
+        """Execute an async operation with retry logic.
+
+        Args:
+            operation: Async callable to execute
+            operation_name: Human-readable name for logging
+
+        Returns:
+            Result from the operation
+
+        Raises:
+            The last exception encountered if all retries fail
+        """
+        last_exception = None
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                return await operation()
+            except aiohttp.ClientError as e:
+                last_exception = e
+
+                # Don't retry on client errors (4xx)
+                if isinstance(e, aiohttp.ClientResponseError) and 400 <= e.status < 500:
+                    LOG.error(f"{operation_name} failed with client error: {e}")
+                    raise
+
+                # Calculate backoff delay
+                if attempt < self.max_retries:
+                    delay = self.initial_delay * (2 ** attempt)
+                    LOG.warning(
+                        f"{operation_name} failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    LOG.error(
+                        f"{operation_name} failed after {self.max_retries + 1} attempts: {e}"
+                    )
+            except Exception as e:
+                # Don't retry on unexpected errors
+                LOG.error(f"{operation_name} failed with unexpected error: {e}")
+                raise
+
+        # This should only happen if all retries failed
+        raise last_exception
 
 
 def parse_last_modified(response: aiohttp.ClientResponse) -> datetime | None:
@@ -133,6 +208,7 @@ class DownloadWorker:
     queue: asyncio.Queue[CollectorFileEntry]
     naming_strategy: FileNamingStrategy
     check_modified: bool
+    retry_helper: RetryHelper
 
     def __init__(
         self,
@@ -147,6 +223,7 @@ class DownloadWorker:
         self.queue = queue
         self.naming_strategy = naming_strategy
         self.check_modified = check_modified
+        self.retry_helper = RetryHelper()
 
     async def download_file(self, entry: CollectorFileEntry) -> None:
         target_file = self.naming_strategy.get_path(self.base_dir, entry)
@@ -163,50 +240,75 @@ class DownloadWorker:
                 )
                 return
 
-            # check if file is modified
-            async with self.session.head(entry.url) as response:
-                content_length = response.headers.get("Content-Length", None)
-                last_modified = parse_last_modified(response)
-                if content_length and last_modified:
-                    # Stat the current file
-                    stat = target_file.stat()
-                    if (
-                        stat.st_size == int(content_length)
-                        and stat.st_mtime == last_modified.timestamp()
-                    ):
-                        LOG.debug(
-                            "Skipping %s (%db at %s), already downloaded",
-                            target_file,
-                            stat.st_size,
-                            last_modified,
-                        )
-                        return
+            # check if file is modified with retry logic
+            async def check_modified():
+                async with self.session.head(entry.url) as response:
+                    return response.headers.get("Content-Length", None), parse_last_modified(response)
 
-        async with self.session.get(entry.url) as response:
-            LOG.debug("HTTP %d %.3fs", response.status, time.time() - t0)
-            if response.status == 200:
-                with target_file.open("wb") as f:
-                    async for data in response.content.iter_chunked(131072):
-                        f.write(data)
-                # Get last modified time from the response
-                last_modified = parse_last_modified(response)
-                if last_modified:
-                    os.utime(
+            content_length, last_modified = await self.retry_helper.execute(
+                check_modified,
+                f"HEAD {entry.url}"
+            )
+
+            if content_length and last_modified:
+                # Stat the current file
+                stat = target_file.stat()
+                if (
+                    stat.st_size == int(content_length)
+                    and stat.st_mtime == last_modified.timestamp()
+                ):
+                    LOG.debug(
+                        "Skipping %s (%db at %s), already downloaded",
                         target_file,
-                        (
-                            last_modified.timestamp(),
-                            last_modified.timestamp(),
-                        ),
+                        stat.st_size,
+                        last_modified,
+                    )
+                    return
+
+        # Download file with retry logic
+        async def download():
+            async with self.session.get(entry.url) as response:
+                LOG.debug("HTTP %d %.3fs", response.status, time.time() - t0)
+                if response.status == 200:
+                    # Download to temporary file first
+                    temp_file = target_file.with_suffix(target_file.suffix + ".tmp")
+                    with temp_file.open("wb") as f:
+                        async for data in response.content.iter_chunked(131072):
+                            f.write(data)
+
+                    # Move to final location
+                    temp_file.replace(target_file)
+
+                    # Get last modified time from the response
+                    last_modified = parse_last_modified(response)
+                    if last_modified:
+                        os.utime(
+                            target_file,
+                            (
+                                last_modified.timestamp(),
+                                last_modified.timestamp(),
+                            ),
+                        )
+
+                    LOG.debug(
+                        "Downloaded %s to %s in %.3fs",
+                        entry.url,
+                        target_file,
+                        time.time() - t0,
+                    )
+                else:
+                    raise aiohttp.ClientResponseError(
+                        request_info=response.request_info,
+                        history=response.history,
+                        status=response.status,
+                        message=f"HTTP {response.status}",
+                        headers=response.headers,
                     )
 
-                LOG.debug(
-                    "Downloaded %s to %s in %.3fs",
-                    entry.url,
-                    target_file,
-                    time.time() - t0,
-                )
-            else:
-                raise ValueError(f"Got status {response.status} for {entry.url}")
+        await self.retry_helper.execute(
+            download,
+            f"Download {entry.url}"
+        )
 
     async def run(self) -> int:
         processed = 0
@@ -229,6 +331,7 @@ class IndexWorker:
     file_types: frozenset[Literal["rib", "update"]]
     db_path: Path | None
     force_cache_refresh: bool
+    retry_helper: RetryHelper
 
     def __init__(
         self,
@@ -244,6 +347,7 @@ class IndexWorker:
         self.file_types = frozenset(file_types)
         self.db_path = db_path
         self.force_cache_refresh = force_cache_refresh
+        self.retry_helper = RetryHelper()
 
     async def run(self) -> int:
         processed = 0
@@ -280,31 +384,42 @@ class IndexWorker:
                     LOG.info(f"Using cached index for {index_entry.url} ({len(cached_entries)} files)")
                     self.results.extend(cached_entries)
                 else:
-                    # Download and parse fresh content
-                    async with self.session.get(index_entry.url) as response:
-                        if response.status != 200:
-                            LOG.error(
-                                "Failed to download index %s: HTTP %d for %s",
-                                index_entry.url,
-                                response.status,
-                                index_entry.collector,
-                            )
-                            continue
+                    # Download and parse fresh content with retry logic
+                    async def download_index():
+                        async with self.session.get(index_entry.url) as response:
+                            if response.status != 200:
+                                LOG.error(
+                                    "Failed to download index %s: HTTP %d for %s",
+                                    index_entry.url,
+                                    response.status,
+                                    index_entry.collector,
+                                )
+                                raise aiohttp.ClientResponseError(
+                                    request_info=response.request_info,
+                                    history=response.history,
+                                    status=response.status,
+                                    message=f"HTTP {response.status}",
+                                    headers=response.headers,
+                                )
+                            return await response.text()
 
-                        content = await response.text()
+                    content = await self.retry_helper.execute(
+                        download_index,
+                        f"Download index {index_entry.url}"
+                    )
 
-                        # Parse the index
-                        file_entries = process_index_entry(index_entry, content)
+                    # Parse the index
+                    file_entries = process_index_entry(index_entry, content)
 
-                        # Store parsed entries in cache
-                        await store_index(
-                            index_entry.url,
-                            file_entries,
-                            month_end_date,
-                            self.db_path
-                        )
+                    # Store parsed entries in cache
+                    await store_index(
+                        index_entry.url,
+                        file_entries,
+                        month_end_date,
+                        self.db_path
+                    )
 
-                        self.results.extend(file_entries)
+                    self.results.extend(file_entries)
             except Exception as e:
                 LOG.error(e)
             finally:
