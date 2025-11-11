@@ -309,6 +309,122 @@ async def store_index(
         logger.warning(f"Failed to store index cache for {url}: {e}")
 
 
+async def get_cached_indexes_batch(
+    urls_with_dates: list[tuple[str, datetime.datetime]],
+    force_refresh: bool = False,
+    db_path: Optional[Path] = None
+) -> dict[str, list[CollectorFileEntry]]:
+    """Get cached file entries for multiple indexes in a single batch operation.
+
+    This is much more efficient than calling get_cached_index() multiple times,
+    reducing from N*2 queries to just 2 queries total.
+
+    Args:
+        urls_with_dates: List of (url, month_end_date) tuples
+        force_refresh: If True, ignore cache and return empty dict
+        db_path: Path to the database file. If None, uses default cache path.
+
+    Returns:
+        Dict mapping URL to list of CollectorFileEntry objects for cached indexes
+    """
+    if force_refresh:
+        logger.debug("Force refresh enabled, skipping batch cache lookup")
+        return {}
+
+    if not urls_with_dates:
+        return {}
+
+    if db_path is None:
+        db_path = get_cache_db_path()
+
+    # Filter out URLs that need refresh based on month
+    valid_urls = []
+    for url, month_end_date in urls_with_dates:
+        if not should_refresh_index(month_end_date):
+            valid_urls.append(url)
+
+    if not valid_urls:
+        logger.debug("No indexes eligible for caching (all need refresh)")
+        return {}
+
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            # Build parameterized query for all URLs
+            placeholders = ','.join('?' * len(valid_urls))
+
+            # Query 1: Get index metadata for all URLs
+            query = f"SELECT url, downloaded_at FROM index_cache WHERE url IN ({placeholders})"
+            cached_urls = set()
+            downloaded_times = {}
+
+            async with db.execute(query, valid_urls) as cursor:
+                rows = await cursor.fetchall()
+                for url, downloaded_at in rows:
+                    cached_urls.add(url)
+                    downloaded_times[url] = downloaded_at
+
+            if not cached_urls:
+                logger.debug(f"No cached indexes found for {len(valid_urls)} URLs")
+                return {}
+
+            logger.info(f"Found {len(cached_urls)} cached indexes out of {len(valid_urls)} requested")
+
+            # Query 2: Get all file entries for cached URLs in one query
+            placeholders = ','.join('?' * len(cached_urls))
+            query = f"""
+                SELECT index_url, collector_name, collector_project, collector_base_url,
+                       collector_installed, collector_removed,
+                       filename, file_url, file_type
+                FROM file_cache
+                WHERE index_url IN ({placeholders})
+            """
+
+            # Group file entries by URL
+            result = {url: [] for url in cached_urls}
+
+            async with db.execute(query, list(cached_urls)) as cursor:
+                async for row in cursor:
+                    (index_url, collector_name, collector_project, collector_base_url,
+                     collector_installed, collector_removed,
+                     filename, file_url, file_type) = row
+
+                    # Reconstruct CollectorInfo
+                    collector = CollectorInfo(
+                        name=collector_name,
+                        project=collector_project,
+                        base_url=collector_base_url,
+                        installed=datetime.datetime.fromisoformat(collector_installed),
+                        removed=datetime.datetime.fromisoformat(collector_removed) if collector_removed else None
+                    )
+
+                    # Reconstruct CollectorFileEntry
+                    file_entry = CollectorFileEntry(
+                        collector=collector,
+                        filename=filename,
+                        url=file_url,
+                        file_type=file_type
+                    )
+                    result[index_url].append(file_entry)
+
+            # Log summary
+            total_files = sum(len(entries) for entries in result.values())
+            logger.info(f"Retrieved {total_files} file entries from cache for {len(result)} indexes")
+
+            # Log individual index times
+            for url in result.keys():
+                if url in downloaded_times:
+                    downloaded_at_str = datetime.datetime.fromtimestamp(
+                        downloaded_times[url], tz=datetime.timezone.utc
+                    ).strftime("%Y-%m-%d %H:%M:%S UTC")
+                    logger.debug(f"Using cached index for {url} (downloaded at {downloaded_at_str})")
+
+            return result
+
+    except Exception as e:
+        logger.warning(f"Batch cache lookup failed: {e}")
+        return {}
+
+
 def get_month_end_date(year: int, month: int) -> datetime.datetime:
     """Get the last moment of a given month (last day at 23:59:59).
 
