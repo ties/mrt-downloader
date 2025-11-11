@@ -187,7 +187,10 @@ async def get_cached_index(
                     return None
 
                 downloaded_at = row[0]
-                logger.info(f"Using cached index for {url} (downloaded at {downloaded_at})")
+                downloaded_at_str = datetime.datetime.fromtimestamp(
+                    downloaded_at, tz=datetime.timezone.utc
+                ).strftime("%Y-%m-%d %H:%M:%S UTC")
+                logger.info(f"Using cached index for {url} (downloaded at {downloaded_at_str})")
 
             # Retrieve all file entries for this index
             async with db.execute(
@@ -387,7 +390,12 @@ async def get_cached_collectors(
                     )
                     collectors.append(collector)
 
-                logger.info(f"Using {len(collectors)} cached collectors for {project}")
+                # Format the cached_at timestamp from the first collector for display
+                if collectors:
+                    cached_at_str = datetime.datetime.fromtimestamp(
+                        cached_at, tz=datetime.timezone.utc
+                    ).strftime("%Y-%m-%d %H:%M:%S UTC")
+                    logger.info(f"Using {len(collectors)} cached collectors for {project} (cached at {cached_at_str})")
                 return collectors
 
     except Exception as e:
