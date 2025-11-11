@@ -1,3 +1,8 @@
+## v0.0.7:
+
+  * Retry downloads on failure
+  * Use a cache (in sqlite) for downloaded indexes
+
 ## v0.0.6:
 
   * CI/CD: workflow now required for merge (missing workflow was allowed
