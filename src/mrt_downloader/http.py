@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Awaitable, Callable, Iterable, Literal, Sequence, TypeVar
 
 import aiohttp
+import click
 from aiohttp import ClientTimeout
 
 from mrt_downloader.cache import get_cached_index, get_month_end_date, store_index
@@ -85,15 +86,30 @@ class RetryHelper:
                 # Calculate backoff delay
                 if attempt < self.max_retries:
                     delay = self.initial_delay * (2 ** attempt)
-                    LOG.warning(
+                    message = (
                         f"{operation_name} failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
                         f"Retrying in {delay}s..."
                     )
+
+                    # Color based on attempt number
+                    # Attempt 1 (attempt == 0): no color (first failure)
+                    # Attempt 2 (attempt == 1): yellow
+                    # Attempt 3+ (attempt >= 2): red
+                    if attempt == 0:
+                        # First retry - no color
+                        click.echo(f"WARNING: {message}")
+                    elif attempt == 1:
+                        # Second retry - yellow
+                        click.echo(click.style(f"WARNING: {message}", fg="yellow"))
+                    else:
+                        # Third+ retry - red
+                        click.echo(click.style(f"WARNING: {message}", fg="red"))
+
                     await asyncio.sleep(delay)
                 else:
-                    LOG.error(
-                        f"{operation_name} failed after {self.max_retries + 1} attempts: {e}"
-                    )
+                    error_message = f"{operation_name} failed after {self.max_retries + 1} attempts: {e}"
+                    click.echo(click.style(f"ERROR: {error_message}", fg="red"))
+                    LOG.error(error_message)
             except Exception as e:
                 # Don't retry on unexpected errors
                 LOG.error(f"{operation_name} failed with unexpected error: {e}")
