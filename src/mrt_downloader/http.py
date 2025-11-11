@@ -13,7 +13,12 @@ import aiohttp
 import click
 from aiohttp import ClientTimeout
 
-from mrt_downloader.cache import get_cached_index, get_month_end_date, store_index
+from mrt_downloader.cache import (
+    get_cached_index,
+    get_cached_indexes_batch,
+    get_month_end_date,
+    store_index,
+)
 from mrt_downloader.collector_index import (
     process_index_entry,
 )
@@ -366,38 +371,50 @@ class IndexWorker:
         self.retry_helper = RetryHelper()
 
     async def run(self) -> int:
-        processed = 0
+        # Drain all entries from queue into a list for batch processing
+        entries_to_process = []
         while not self.queue.empty():
-            index_entry = await self.queue.get()
-            if not index_entry.file_types & self.file_types:
+            entry = await self.queue.get()
+            if not entry.file_types & self.file_types:
                 LOG.debug(
                     "Skipping index %s, contains %s (want: %s)",
-                    index_entry.url,
-                    index_entry.file_types,
+                    entry.url,
+                    entry.file_types,
                     self.file_types,
                 )
                 self.queue.task_done()
                 continue
+            entries_to_process.append(entry)
 
+        if not entries_to_process:
+            return 0
+
+        # Build list of (url, month_end_date) for batch cache lookup
+        urls_with_dates = [
+            (
+                entry.url,
+                get_month_end_date(entry.time_period.year, entry.time_period.month)
+            )
+            for entry in entries_to_process
+        ]
+
+        # Batch fetch all cached indexes
+        batch_cache = await get_cached_indexes_batch(
+            urls_with_dates,
+            self.force_cache_refresh,
+            self.db_path
+        )
+
+        # Process each entry
+        processed = 0
+        for index_entry in entries_to_process:
             processed += 1
             try:
-                # Calculate the month end date for this index
-                month_end_date = get_month_end_date(
-                    index_entry.time_period.year,
-                    index_entry.time_period.month
-                )
-
-                # Try to get cached file entries
-                cached_entries = await get_cached_index(
-                    index_entry.url,
-                    month_end_date,
-                    self.force_cache_refresh,
-                    self.db_path
-                )
-
-                if cached_entries is not None:
+                # Check if this entry is in batch cache
+                if index_entry.url in batch_cache:
                     # Use cached file entries
-                    LOG.info(f"Using cached index for {index_entry.url} ({len(cached_entries)} files)")
+                    cached_entries = batch_cache[index_entry.url]
+                    LOG.debug(f"Using cached index for {index_entry.url} ({len(cached_entries)} files)")
                     self.results.extend(cached_entries)
                 else:
                     # Download and parse fresh content with retry logic
@@ -427,6 +444,12 @@ class IndexWorker:
                     # Parse the index
                     file_entries = process_index_entry(index_entry, content)
 
+                    # Calculate month end date for storage
+                    month_end_date = get_month_end_date(
+                        index_entry.time_period.year,
+                        index_entry.time_period.month
+                    )
+
                     # Store parsed entries in cache
                     await store_index(
                         index_entry.url,
@@ -438,6 +461,9 @@ class IndexWorker:
                     self.results.extend(file_entries)
             except Exception as e:
                 LOG.error(e)
-            finally:
-                self.queue.task_done()
+
+        # Mark all queue items as done
+        for _ in entries_to_process:
+            self.queue.task_done()
+
         return processed
