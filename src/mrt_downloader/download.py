@@ -37,6 +37,7 @@ async def download_files(
     update_only: bool = False,
     collectors: list[str] | None = None,
     project: frozenset[Literal["ris", "routeviews"]] = frozenset(["ris"]),
+    retry_count: int = 3,
 ):
     """Gather the list of update files per timestamp per rrc and download them."""
     assert start_time.tzinfo == datetime.UTC, "Start time must be in UTC"
@@ -96,7 +97,7 @@ async def download_files(
         for idx in indices:
             index_queue.put_nowait(idx)
 
-        index_worker = IndexWorker(session, index_queue)
+        index_worker = IndexWorker(session, index_queue, retry_count=retry_count)
         # run num_workers workers to get the indices.
         status = await asyncio.gather(*[index_worker.run() for _ in range(num_workers)])
 
@@ -107,7 +108,9 @@ async def download_files(
         )
 
         queue: asyncio.Queue[CollectorFileEntry] = asyncio.Queue()
-        download_worker = DownloadWorker(target_dir, naming_strategy, session, queue)
+        download_worker = DownloadWorker(
+            target_dir, naming_strategy, session, queue, retry_count=retry_count
+        )
 
         # Add the relevant files to queue
         collected_files = 0

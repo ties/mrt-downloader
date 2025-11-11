@@ -132,6 +132,7 @@ class DownloadWorker:
     queue: asyncio.Queue[CollectorFileEntry]
     naming_strategy: FileNamingStrategy
     check_modified: bool
+    retry_count: int
 
     def __init__(
         self,
@@ -140,12 +141,14 @@ class DownloadWorker:
         session: aiohttp.ClientSession,
         queue: asyncio.Queue[CollectorFileEntry],
         check_modified: bool = True,
+        retry_count: int = 3,
     ):
         self.base_dir = base_dir
         self.session = session
         self.queue = queue
         self.naming_strategy = naming_strategy
         self.check_modified = check_modified
+        self.retry_count = retry_count
 
     async def download_file(self, entry: CollectorFileEntry) -> None:
         target_file = self.naming_strategy.get_path(self.base_dir, entry)
@@ -212,12 +215,37 @@ class DownloadWorker:
         while not self.queue.empty():
             download = await self.queue.get()
             processed += 1
-            try:
-                await self.download_file(download)
-            except Exception as e:
-                LOG.error(e)
-            finally:
-                self.queue.task_done()
+
+            # Retry logic for ConnectionResetError
+            for attempt in range(self.retry_count + 1):
+                try:
+                    await self.download_file(download)
+                    break  # Success, exit retry loop
+                except ConnectionResetError as e:
+                    if attempt < self.retry_count:
+                        # Exponential backoff: 2s, 4s, 8s, etc.
+                        backoff_time = 2 ** (attempt + 1)
+                        LOG.warning(
+                            "ConnectionResetError for %s (attempt %d/%d): %s - retrying in %ds",
+                            download.url,
+                            attempt + 1,
+                            self.retry_count + 1,
+                            e,
+                            backoff_time,
+                        )
+                        await asyncio.sleep(backoff_time)
+                    else:
+                        LOG.error(
+                            "ConnectionResetError for %s after %d attempts: %s",
+                            download.url,
+                            self.retry_count + 1,
+                            e,
+                        )
+                except Exception as e:
+                    LOG.error(e)
+                    break  # Don't retry for other exceptions
+
+            self.queue.task_done()
         return processed
 
 
@@ -226,17 +254,20 @@ class IndexWorker:
     queue: asyncio.Queue[CollectorIndexEntry]
     results: list[CollectorFileEntry] = []
     file_types: frozenset[Literal["rib", "update"]]
+    retry_count: int
 
     def __init__(
         self,
         session: aiohttp.ClientSession,
         queue: asyncio.Queue[CollectorIndexEntry],
         file_types: Iterable[Literal["rib", "update"]] = frozenset(("rib", "update")),
+        retry_count: int = 3,
     ):
         self.session = session
         self.queue = queue
         self.results = []
         self.file_types = frozenset(file_types)
+        self.retry_count = retry_count
 
     async def run(self) -> int:
         processed = 0
@@ -253,22 +284,47 @@ class IndexWorker:
                 continue
 
             processed += 1
-            try:
-                async with self.session.get(index_entry.url) as response:
-                    if response.status != 200:
-                        LOG.error(
-                            "Failed to download index %s: HTTP %d for %s",
-                            index_entry.url,
-                            response.status,
-                            index_entry.collector,
-                        )
-                        continue
 
-                    self.results.extend(
-                        process_index_entry(index_entry, await response.text())
-                    )
-            except Exception as e:
-                LOG.error(e)
-            finally:
-                self.queue.task_done()
+            # Retry logic for ConnectionResetError
+            for attempt in range(self.retry_count + 1):
+                try:
+                    async with self.session.get(index_entry.url) as response:
+                        if response.status != 200:
+                            LOG.error(
+                                "Failed to download index %s: HTTP %d for %s",
+                                index_entry.url,
+                                response.status,
+                                index_entry.collector,
+                            )
+                            break
+
+                        self.results.extend(
+                            process_index_entry(index_entry, await response.text())
+                        )
+                    break  # Success, exit retry loop
+                except ConnectionResetError as e:
+                    if attempt < self.retry_count:
+                        # Exponential backoff: 2s, 4s, 8s, etc.
+                        backoff_time = 2 ** (attempt + 1)
+                        LOG.warning(
+                            "ConnectionResetError for index %s (attempt %d/%d): %s - retrying in %ds",
+                            index_entry.url,
+                            attempt + 1,
+                            self.retry_count + 1,
+                            e,
+                            backoff_time,
+                        )
+                        await asyncio.sleep(backoff_time)
+                    else:
+                        LOG.error(
+                            "ConnectionResetError for index %s after %d attempts: %s",
+                            index_entry.url,
+                            self.retry_count + 1,
+                            e,
+                        )
+                except Exception as e:
+                    LOG.error(e)
+                    break  # Don't retry for other exceptions
+
+            self.queue.task_done()
         return processed

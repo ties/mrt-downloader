@@ -6,6 +6,7 @@ import asyncio
 import datetime
 import logging
 import multiprocessing
+import os
 import sys
 import warnings
 from pathlib import Path
@@ -92,6 +93,12 @@ CLICK_DATETIME_TYPE = click.DateTime(
     default=multiprocessing.cpu_count(),
     help="Number of download worker threads",
 )
+@click.option(
+    "--retry-count",
+    type=int,
+    default=lambda: int(os.environ.get("RETRY_COUNT", "3")),
+    help="Number of retries for ConnectionResetError (default: 3, can be set via RETRY_COUNT env var)",
+)
 def cli(
     target_dir: Path,
     create_target: bool,
@@ -100,6 +107,7 @@ def cli(
     verbose: bool,
     update_only: bool,
     num_threads: int,
+    retry_count: int,
     partition_directories: bool,
     project: list[Literal["ris", "routeviews"]],
     partitioning: Literal["hour", "collector-month", "flat"] = "collector-month",
@@ -232,6 +240,7 @@ def cli(
             num_workers=num_threads,
             naming_strategy=naming_strategy,
             project=frozenset(project),
+            retry_count=retry_count,
         )
     )
 
