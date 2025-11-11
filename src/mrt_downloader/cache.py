@@ -1,14 +1,15 @@
 """Index caching using SQLite to avoid re-downloading completed month indexes."""
 
-import aiosqlite
 import datetime
 import logging
 from pathlib import Path
 from typing import Optional
 
+import aiosqlite
+
 from mrt_downloader.models import CollectorFileEntry, CollectorInfo
 
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 # Cache refresh threshold: only refresh indexes for months that ended less than this many seconds ago
 # Default: 7 days = 7 * 24 * 60 * 60 seconds
@@ -92,7 +93,7 @@ async def init_cache_db(db_path: Optional[Path] = None) -> None:
 
         await db.commit()
 
-    logger.debug(f"Initialized cache database at {db_path}")
+    LOG.debug(f"Initialized cache database at {db_path}")
 
 
 def should_refresh_index(month_end_date: datetime.datetime) -> bool:
@@ -122,7 +123,9 @@ def should_refresh_index(month_end_date: datetime.datetime) -> bool:
     index_month = (month_end_date.year, month_end_date.month)
 
     if index_month == current_month:
-        logger.debug(f"Index is for current month ({month_end_date.year}-{month_end_date.month:02d}), will refresh")
+        LOG.debug(
+            f"Index is for current month ({month_end_date.year}-{month_end_date.month:02d}), will refresh"
+        )
         return True
 
     # Check if the month ended recently (within threshold)
@@ -131,12 +134,12 @@ def should_refresh_index(month_end_date: datetime.datetime) -> bool:
     # If month_end_date is in the future (shouldn't happen with proper usage),
     # treat it as needing refresh
     if time_since_month_end < 0:
-        logger.warning(f"Month end date {month_end_date} is in the future, will refresh")
+        LOG.warning(f"Month end date {month_end_date} is in the future, will refresh")
         return True
 
     should_refresh = time_since_month_end < CACHE_REFRESH_THRESHOLD_SECONDS
 
-    logger.debug(
+    LOG.debug(
         f"Month {month_end_date.year}-{month_end_date.month:02d} ended {time_since_month_end:.0f}s ago, "
         f"threshold is {CACHE_REFRESH_THRESHOLD_SECONDS}s, "
         f"should_refresh={should_refresh}"
@@ -149,7 +152,7 @@ async def get_cached_index(
     url: str,
     month_end_date: datetime.datetime,
     force_refresh: bool = False,
-    db_path: Optional[Path] = None
+    db_path: Optional[Path] = None,
 ) -> Optional[list[CollectorFileEntry]]:
     """Get cached file entries for an index if they exist and are still valid.
 
@@ -163,7 +166,7 @@ async def get_cached_index(
         List of CollectorFileEntry objects if valid cache exists, None otherwise
     """
     if force_refresh:
-        logger.debug(f"Force refresh enabled, skipping cache for {url}")
+        LOG.debug(f"Force refresh enabled, skipping cache for {url}")
         return None
 
     if db_path is None:
@@ -171,26 +174,27 @@ async def get_cached_index(
 
     # If the month recently ended, we should refresh the index
     if should_refresh_index(month_end_date):
-        logger.debug(f"Month is recent, skipping cache for {url}")
+        LOG.debug(f"Month is recent, skipping cache for {url}")
         return None
 
     try:
         async with aiosqlite.connect(db_path) as db:
             # Check if the index is in cache
             async with db.execute(
-                "SELECT downloaded_at FROM index_cache WHERE url = ?",
-                (url,)
+                "SELECT downloaded_at FROM index_cache WHERE url = ?", (url,)
             ) as cursor:
                 row = await cursor.fetchone()
                 if not row:
-                    logger.debug(f"No cache entry found for {url}")
+                    LOG.debug(f"No cache entry found for {url}")
                     return None
 
                 downloaded_at = row[0]
                 downloaded_at_str = datetime.datetime.fromtimestamp(
                     downloaded_at, tz=datetime.timezone.utc
                 ).strftime("%Y-%m-%d %H:%M:%S UTC")
-                logger.info(f"Using cached index for {url} (downloaded at {downloaded_at_str})")
+                LOG.info(
+                    f"Using cached index for {url} (downloaded at {downloaded_at_str})"
+                )
 
             # Retrieve all file entries for this index
             async with db.execute(
@@ -201,15 +205,22 @@ async def get_cached_index(
                 FROM file_cache
                 WHERE index_url = ?
                 """,
-                (url,)
+                (url,),
             ) as cursor:
                 rows = await cursor.fetchall()
 
                 file_entries = []
                 for row in rows:
-                    (collector_name, collector_project, collector_base_url,
-                     collector_installed, collector_removed,
-                     filename, file_url, file_type) = row
+                    (
+                        collector_name,
+                        collector_project,
+                        collector_base_url,
+                        collector_installed,
+                        collector_removed,
+                        filename,
+                        file_url,
+                        file_type,
+                    ) = row
 
                     # Reconstruct CollectorInfo
                     collector = CollectorInfo(
@@ -217,7 +228,9 @@ async def get_cached_index(
                         project=collector_project,
                         base_url=collector_base_url,
                         installed=datetime.datetime.fromisoformat(collector_installed),
-                        removed=datetime.datetime.fromisoformat(collector_removed) if collector_removed else None
+                        removed=datetime.datetime.fromisoformat(collector_removed)
+                        if collector_removed
+                        else None,
                     )
 
                     # Reconstruct CollectorFileEntry
@@ -225,16 +238,18 @@ async def get_cached_index(
                         collector=collector,
                         filename=filename,
                         url=file_url,
-                        file_type=file_type
+                        file_type=file_type,
                     )
                     file_entries.append(file_entry)
 
-                logger.debug(f"Retrieved {len(file_entries)} file entries from cache for {url}")
+                LOG.debug(
+                    f"Retrieved {len(file_entries)} file entries from cache for {url}"
+                )
                 return file_entries
 
     except Exception as e:
         # If the database doesn't exist or there's an error, just return None
-        logger.debug(f"Cache lookup failed for {url}: {e}")
+        LOG.debug(f"Cache lookup failed for {url}: {e}")
         return None
 
 
@@ -242,7 +257,7 @@ async def store_index(
     url: str,
     file_entries: list[CollectorFileEntry],
     month_end_date: datetime.datetime,
-    db_path: Optional[Path] = None
+    db_path: Optional[Path] = None,
 ) -> None:
     """Store parsed file entries for an index in the cache.
 
@@ -269,14 +284,11 @@ async def store_index(
                 INSERT OR REPLACE INTO index_cache (url, downloaded_at, month_end_date)
                 VALUES (?, ?, ?)
                 """,
-                (url, now, month_end_str)
+                (url, now, month_end_str),
             )
 
             # Delete old file entries for this index (if replacing)
-            await db.execute(
-                "DELETE FROM file_cache WHERE index_url = ?",
-                (url,)
-            )
+            await db.execute("DELETE FROM file_cache WHERE index_url = ?", (url,))
 
             # Store all file entries
             for entry in file_entries:
@@ -294,25 +306,27 @@ async def store_index(
                         entry.collector.project,
                         entry.collector.base_url,
                         entry.collector.installed.isoformat(),
-                        entry.collector.removed.isoformat() if entry.collector.removed else None,
+                        entry.collector.removed.isoformat()
+                        if entry.collector.removed
+                        else None,
                         entry.filename,
                         entry.url,
-                        entry.file_type
-                    )
+                        entry.file_type,
+                    ),
                 )
 
             await db.commit()
 
-        logger.debug(f"Stored {len(file_entries)} file entries in cache for {url}")
+        LOG.debug(f"Stored {len(file_entries)} file entries in cache for {url}")
     except Exception as e:
         # Log but don't fail if caching fails
-        logger.warning(f"Failed to store index cache for {url}: {e}")
+        LOG.warning(f"Failed to store index cache for {url}: {e}")
 
 
 async def get_cached_indexes_batch(
     urls_with_dates: list[tuple[str, datetime.datetime]],
     force_refresh: bool = False,
-    db_path: Optional[Path] = None
+    db_path: Optional[Path] = None,
 ) -> dict[str, list[CollectorFileEntry]]:
     """Get cached file entries for multiple indexes in a single batch operation.
 
@@ -328,7 +342,7 @@ async def get_cached_indexes_batch(
         Dict mapping URL to list of CollectorFileEntry objects for cached indexes
     """
     if force_refresh:
-        logger.debug("Force refresh enabled, skipping batch cache lookup")
+        LOG.debug("Force refresh enabled, skipping batch cache lookup")
         return {}
 
     if not urls_with_dates:
@@ -344,13 +358,13 @@ async def get_cached_indexes_batch(
             valid_urls.append(url)
 
     if not valid_urls:
-        logger.debug("No indexes eligible for caching (all need refresh)")
+        LOG.debug("No indexes eligible for caching (all need refresh)")
         return {}
 
     try:
         async with aiosqlite.connect(db_path) as db:
             # Build parameterized query for all URLs
-            placeholders = ','.join('?' * len(valid_urls))
+            placeholders = ",".join("?" * len(valid_urls))
 
             # Query 1: Get index metadata for all URLs
             query = f"SELECT url, downloaded_at FROM index_cache WHERE url IN ({placeholders})"
@@ -364,13 +378,15 @@ async def get_cached_indexes_batch(
                     downloaded_times[url] = downloaded_at
 
             if not cached_urls:
-                logger.debug(f"No cached indexes found for {len(valid_urls)} URLs")
+                LOG.debug(f"No cached indexes found for {len(valid_urls)} URLs")
                 return {}
 
-            logger.info(f"Found {len(cached_urls)} cached indexes out of {len(valid_urls)} requested")
+            LOG.info(
+                f"Found {len(cached_urls)} cached indexes out of {len(valid_urls)} requested"
+            )
 
             # Query 2: Get all file entries for cached URLs in one query
-            placeholders = ','.join('?' * len(cached_urls))
+            placeholders = ",".join("?" * len(cached_urls))
             query = f"""
                 SELECT index_url, collector_name, collector_project, collector_base_url,
                        collector_installed, collector_removed,
@@ -384,9 +400,17 @@ async def get_cached_indexes_batch(
 
             async with db.execute(query, list(cached_urls)) as cursor:
                 async for row in cursor:
-                    (index_url, collector_name, collector_project, collector_base_url,
-                     collector_installed, collector_removed,
-                     filename, file_url, file_type) = row
+                    (
+                        index_url,
+                        collector_name,
+                        collector_project,
+                        collector_base_url,
+                        collector_installed,
+                        collector_removed,
+                        filename,
+                        file_url,
+                        file_type,
+                    ) = row
 
                     # Reconstruct CollectorInfo
                     collector = CollectorInfo(
@@ -394,7 +418,9 @@ async def get_cached_indexes_batch(
                         project=collector_project,
                         base_url=collector_base_url,
                         installed=datetime.datetime.fromisoformat(collector_installed),
-                        removed=datetime.datetime.fromisoformat(collector_removed) if collector_removed else None
+                        removed=datetime.datetime.fromisoformat(collector_removed)
+                        if collector_removed
+                        else None,
                     )
 
                     # Reconstruct CollectorFileEntry
@@ -402,13 +428,15 @@ async def get_cached_indexes_batch(
                         collector=collector,
                         filename=filename,
                         url=file_url,
-                        file_type=file_type
+                        file_type=file_type,
                     )
                     result[index_url].append(file_entry)
 
             # Log summary
             total_files = sum(len(entries) for entries in result.values())
-            logger.info(f"Retrieved {total_files} file entries from cache for {len(result)} indexes")
+            LOG.info(
+                f"Retrieved {total_files} file entries from cache for {len(result)} indexes"
+            )
 
             # Log individual index times
             for url in result.keys():
@@ -416,12 +444,14 @@ async def get_cached_indexes_batch(
                     downloaded_at_str = datetime.datetime.fromtimestamp(
                         downloaded_times[url], tz=datetime.timezone.utc
                     ).strftime("%Y-%m-%d %H:%M:%S UTC")
-                    logger.debug(f"Using cached index for {url} (downloaded at {downloaded_at_str})")
+                    LOG.debug(
+                        f"Using cached index for {url} (downloaded at {downloaded_at_str})"
+                    )
 
             return result
 
     except Exception as e:
-        logger.warning(f"Batch cache lookup failed: {e}")
+        LOG.warning(f"Batch cache lookup failed: {e}")
         return {}
 
 
@@ -446,9 +476,7 @@ def get_month_end_date(year: int, month: int) -> datetime.datetime:
 
 
 async def get_cached_collectors(
-    project: str,
-    force_refresh: bool = False,
-    db_path: Optional[Path] = None
+    project: str, force_refresh: bool = False, db_path: Optional[Path] = None
 ) -> Optional[list[CollectorInfo]]:
     """Get cached collectors for a project if they exist and are still valid.
 
@@ -461,7 +489,7 @@ async def get_cached_collectors(
         List of CollectorInfo objects if valid cache exists, None otherwise
     """
     if force_refresh:
-        logger.debug(f"Force refresh enabled, skipping cache for {project} collectors")
+        LOG.debug(f"Force refresh enabled, skipping cache for {project} collectors")
         return None
 
     if db_path is None:
@@ -472,12 +500,12 @@ async def get_cached_collectors(
             # Get all collectors for this project and check if any are stale
             async with db.execute(
                 "SELECT name, base_url, installed, removed, cached_at FROM collector_cache WHERE project = ?",
-                (project,)
+                (project,),
             ) as cursor:
                 rows = await cursor.fetchall()
 
                 if not rows:
-                    logger.debug(f"No cached collectors found for {project}")
+                    LOG.debug(f"No cached collectors found for {project}")
                     return None
 
                 # Check if cache is still fresh (any stale entry invalidates the whole cache)
@@ -490,7 +518,7 @@ async def get_cached_collectors(
                     # Check if this entry is stale
                     age = now - cached_at
                     if age > COLLECTOR_CACHE_REFRESH_THRESHOLD_SECONDS:
-                        logger.debug(
+                        LOG.debug(
                             f"Collector cache for {project} is stale "
                             f"(age: {age:.0f}s > {COLLECTOR_CACHE_REFRESH_THRESHOLD_SECONDS}s)"
                         )
@@ -502,7 +530,9 @@ async def get_cached_collectors(
                         project=project,
                         base_url=base_url,
                         installed=datetime.datetime.fromisoformat(installed_str),
-                        removed=datetime.datetime.fromisoformat(removed_str) if removed_str else None
+                        removed=datetime.datetime.fromisoformat(removed_str)
+                        if removed_str
+                        else None,
                     )
                     collectors.append(collector)
 
@@ -511,18 +541,18 @@ async def get_cached_collectors(
                     cached_at_str = datetime.datetime.fromtimestamp(
                         cached_at, tz=datetime.timezone.utc
                     ).strftime("%Y-%m-%d %H:%M:%S UTC")
-                    logger.info(f"Using {len(collectors)} cached collectors for {project} (cached at {cached_at_str})")
+                    LOG.info(
+                        f"Using {len(collectors)} cached collectors for {project} (cached at {cached_at_str})"
+                    )
                 return collectors
 
     except Exception as e:
-        logger.debug(f"Collector cache lookup failed for {project}: {e}")
+        LOG.debug(f"Collector cache lookup failed for {project}: {e}")
         return None
 
 
 async def store_collectors(
-    project: str,
-    collectors: list[CollectorInfo],
-    db_path: Optional[Path] = None
+    project: str, collectors: list[CollectorInfo], db_path: Optional[Path] = None
 ) -> None:
     """Store collectors in the cache.
 
@@ -543,8 +573,7 @@ async def store_collectors(
         async with aiosqlite.connect(db_path) as db:
             # Delete old collectors for this project
             await db.execute(
-                "DELETE FROM collector_cache WHERE project = ?",
-                (project,)
+                "DELETE FROM collector_cache WHERE project = ?", (project,)
             )
 
             # Store all collectors
@@ -560,13 +589,13 @@ async def store_collectors(
                         collector.base_url,
                         collector.installed.isoformat(),
                         collector.removed.isoformat() if collector.removed else None,
-                        now
-                    )
+                        now,
+                    ),
                 )
 
             await db.commit()
 
-        logger.debug(f"Stored {len(collectors)} collectors in cache for {project}")
+        LOG.debug(f"Stored {len(collectors)} collectors in cache for {project}")
     except Exception as e:
         # Log but don't fail if caching fails
-        logger.warning(f"Failed to store collector cache for {project}: {e}")
+        LOG.warning(f"Failed to store collector cache for {project}: {e}")
