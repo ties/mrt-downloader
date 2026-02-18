@@ -2,6 +2,7 @@
 
   * Retry downloads on failure
   * Use a cache (in sqlite) for downloaded indexes
+  * Use newer aiohttp version
 
 ## v0.0.6:
 
