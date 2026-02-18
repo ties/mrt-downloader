@@ -2,6 +2,7 @@ import asyncio
 import email.utils
 import logging
 import os
+import tempfile
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -292,13 +293,14 @@ class DownloadWorker:
                 LOG.debug("HTTP %d %.3fs", response.status, time.time() - t0)
                 if response.status == 200:
                     # Download to temporary file first
-                    temp_file = target_file.with_suffix(target_file.suffix + ".tmp")
-                    with temp_file.open("wb") as f:
+                    with tempfile.NamedTemporaryFile(
+                        dir=target_file.parent, suffix=".tmp"
+                    ) as f:
                         async for data in response.content.iter_chunked(131072):
                             f.write(data)
-
-                    # Move to final location
-                    temp_file.replace(target_file)
+                        f.flush()
+                        Path(f.name).replace(target_file)
+                        f.delete = False
 
                     # Get last modified time from the response
                     last_modified = parse_last_modified(response)
