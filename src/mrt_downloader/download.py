@@ -3,8 +3,7 @@ import datetime
 import itertools
 import logging
 from pathlib import Path
-from types import CoroutineType
-from typing import Any, Literal
+from typing import Literal
 
 import aiohttp
 import click
@@ -122,7 +121,11 @@ async def download_files(
             index_queue.put_nowait(idx)
 
         index_worker = IndexWorker(
-            session, index_queue, file_types=file_types, db_path=db_path, force_cache_refresh=force_cache_refresh
+            session,
+            index_queue,
+            file_types=file_types,
+            db_path=db_path,
+            force_cache_refresh=force_cache_refresh,
         )
         # run num_workers workers to get the indices.
         status = await asyncio.gather(*[index_worker.run() for _ in range(num_workers)])
