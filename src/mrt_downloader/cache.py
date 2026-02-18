@@ -93,7 +93,7 @@ async def init_cache_db(db_path: Optional[Path] = None) -> None:
 
         await db.commit()
 
-    LOG.debug(f"Initialized cache database at {db_path}")
+    LOG.debug("Using cache database at %s", db_path)
 
 
 def should_refresh_index(month_end_date: datetime.datetime) -> bool:
@@ -193,7 +193,9 @@ async def get_cached_index(
                     downloaded_at, tz=datetime.timezone.utc
                 ).strftime("%Y-%m-%d %H:%M:%S UTC")
                 LOG.info(
-                    f"Using cached index for {url} (downloaded at {downloaded_at_str})"
+                    "Using cached index for %s (downloaded at %s)",
+                    url,
+                    downloaded_at_str,
                 )
 
             # Retrieve all file entries for this index

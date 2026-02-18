@@ -3,6 +3,8 @@
 ![PyPI - Version](https://img.shields.io/pypi/v/mrt-downloader)
 
 Download MRT update or bview files, from RIPE RIS, routeviews, or both.
+The CLI uses a local cache for the index pages from the route collector
+projects.
 
 ```
 # install the tool using pipx
