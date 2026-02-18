@@ -1,6 +1,8 @@
 # Download MRT updates
+![GitHub tag check runs](https://img.shields.io/github/check-runs/ties/mrt-downloader/main)
+![PyPI - Version](https://img.shields.io/pypi/v/mrt-downloader)
 
-Download MRT updates. Just from RIPE RIS for now.
+Download MRT update or bview files, from RIPE RIS, routeviews, or both.
 
 ```
 # install the tool using pipx
