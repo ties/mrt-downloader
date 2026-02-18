@@ -14,7 +14,6 @@ import click
 from aiohttp import ClientTimeout
 
 from mrt_downloader.cache import (
-    get_cached_index,
     get_cached_indexes_batch,
     get_month_end_date,
     store_index,
@@ -33,7 +32,7 @@ except PackageNotFoundError:
 
 USER_AGENT = f"mrt-downloader/{__version__} https://github.com/ties/mrt-downloader"
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 class RetryHelper:
@@ -90,7 +89,7 @@ class RetryHelper:
 
                 # Calculate backoff delay
                 if attempt < self.max_retries:
-                    delay = self.initial_delay * (2 ** attempt)
+                    delay = self.initial_delay * (2**attempt)
                     message = (
                         f"{operation_name} failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
                         f"Retrying in {delay}s..."
@@ -264,11 +263,12 @@ class DownloadWorker:
             # check if file is modified with retry logic
             async def check_modified():
                 async with self.session.head(entry.url) as response:
-                    return response.headers.get("Content-Length", None), parse_last_modified(response)
+                    return response.headers.get(
+                        "Content-Length", None
+                    ), parse_last_modified(response)
 
             content_length, last_modified = await self.retry_helper.execute(
-                check_modified,
-                f"HEAD {entry.url}"
+                check_modified, f"HEAD {entry.url}"
             )
 
             if content_length and last_modified:
@@ -326,10 +326,7 @@ class DownloadWorker:
                         headers=response.headers,
                     )
 
-        await self.retry_helper.execute(
-            download,
-            f"Download {entry.url}"
-        )
+        await self.retry_helper.execute(download, f"Download {entry.url}")
 
     async def run(self) -> int:
         processed = 0
@@ -393,16 +390,14 @@ class IndexWorker:
         urls_with_dates = [
             (
                 entry.url,
-                get_month_end_date(entry.time_period.year, entry.time_period.month)
+                get_month_end_date(entry.time_period.year, entry.time_period.month),
             )
             for entry in entries_to_process
         ]
 
         # Batch fetch all cached indexes
         batch_cache = await get_cached_indexes_batch(
-            urls_with_dates,
-            self.force_cache_refresh,
-            self.db_path
+            urls_with_dates, self.force_cache_refresh, self.db_path
         )
 
         # Process each entry
@@ -414,7 +409,9 @@ class IndexWorker:
                 if index_entry.url in batch_cache:
                     # Use cached file entries
                     cached_entries = batch_cache[index_entry.url]
-                    LOG.debug(f"Using cached index for {index_entry.url} ({len(cached_entries)} files)")
+                    LOG.debug(
+                        f"Using cached index for {index_entry.url} ({len(cached_entries)} files)"
+                    )
                     self.results.extend(cached_entries)
                 else:
                     # Download and parse fresh content with retry logic
@@ -437,8 +434,7 @@ class IndexWorker:
                             return await response.text()
 
                     content = await self.retry_helper.execute(
-                        download_index,
-                        f"Download index {index_entry.url}"
+                        download_index, f"Download index {index_entry.url}"
                     )
 
                     # Parse the index
@@ -446,16 +442,12 @@ class IndexWorker:
 
                     # Calculate month end date for storage
                     month_end_date = get_month_end_date(
-                        index_entry.time_period.year,
-                        index_entry.time_period.month
+                        index_entry.time_period.year, index_entry.time_period.month
                     )
 
                     # Store parsed entries in cache
                     await store_index(
-                        index_entry.url,
-                        file_entries,
-                        month_end_date,
-                        self.db_path
+                        index_entry.url, file_entries, month_end_date, self.db_path
                     )
 
                     self.results.extend(file_entries)

@@ -7,8 +7,6 @@ from pathlib import Path
 import pytest
 
 from mrt_downloader.cache import (
-    CACHE_REFRESH_THRESHOLD_SECONDS,
-    COLLECTOR_CACHE_REFRESH_THRESHOLD_SECONDS,
     get_cached_collectors,
     get_cached_index,
     get_month_end_date,
@@ -38,7 +36,9 @@ async def test_store_and_retrieve_index():
 
         url = "https://example.com/2023.01/"
         # Use an old month that won't be refreshed
-        month_end_date = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
+        month_end_date = datetime.datetime(
+            2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc
+        )
 
         # Create test data
         collector = CollectorInfo(
@@ -46,7 +46,7 @@ async def test_store_and_retrieve_index():
             project="ris",
             base_url="https://data.ris.ripe.net/rrc00/",
             installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
-            removed=None
+            removed=None,
         )
 
         file_entries = [
@@ -54,13 +54,13 @@ async def test_store_and_retrieve_index():
                 collector=collector,
                 filename="updates.20230115.0000.gz",
                 url="https://data.ris.ripe.net/rrc00/2023.01/updates.20230115.0000.gz",
-                file_type="update"
+                file_type="update",
             ),
             CollectorFileEntry(
                 collector=collector,
                 filename="bview.20230101.0000.gz",
                 url="https://data.ris.ripe.net/rrc00/2023.01/bview.20230101.0000.gz",
-                file_type="rib"
+                file_type="rib",
             ),
         ]
 
@@ -86,7 +86,9 @@ async def test_cache_miss():
         await init_cache_db(db_path)
 
         url = "https://example.com/2023.01/"
-        month_end_date = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
+        month_end_date = datetime.datetime(
+            2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc
+        )
 
         # Try to retrieve without storing
         cached_entries = await get_cached_index(url, month_end_date, db_path=db_path)
@@ -111,7 +113,7 @@ async def test_recent_month_not_cached():
             project="ris",
             base_url="https://data.ris.ripe.net/rrc00/",
             installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
-            removed=None
+            removed=None,
         )
 
         file_entries = [
@@ -119,7 +121,7 @@ async def test_recent_month_not_cached():
                 collector=collector,
                 filename="updates.20251101.0000.gz",
                 url="https://data.ris.ripe.net/rrc00/2025.11/updates.20251101.0000.gz",
-                file_type="update"
+                file_type="update",
             ),
         ]
 
@@ -189,7 +191,9 @@ async def test_auto_init_on_store():
         # Don't call init_cache_db
 
         url = "https://example.com/2023.01/"
-        month_end_date = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
+        month_end_date = datetime.datetime(
+            2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc
+        )
 
         # Create test data
         collector = CollectorInfo(
@@ -197,7 +201,7 @@ async def test_auto_init_on_store():
             project="ris",
             base_url="https://data.ris.ripe.net/rrc00/",
             installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
-            removed=None
+            removed=None,
         )
 
         file_entries = [
@@ -205,7 +209,7 @@ async def test_auto_init_on_store():
                 collector=collector,
                 filename="updates.20230115.0000.gz",
                 url="https://data.ris.ripe.net/rrc00/2023.01/updates.20230115.0000.gz",
-                file_type="update"
+                file_type="update",
             ),
         ]
 
@@ -234,14 +238,14 @@ async def test_store_and_retrieve_collectors():
                 project="ris",
                 base_url="https://data.ris.ripe.net/rrc00/",
                 installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
-                removed=None
+                removed=None,
             ),
             CollectorInfo(
                 name="RRC01",
                 project="ris",
                 base_url="https://data.ris.ripe.net/rrc01/",
                 installed=datetime.datetime(2001, 5, 1, tzinfo=datetime.timezone.utc),
-                removed=None
+                removed=None,
             ),
         ]
 
@@ -283,7 +287,7 @@ async def test_collector_force_refresh():
                 project="ris",
                 base_url="https://data.ris.ripe.net/rrc00/",
                 installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
-                removed=None
+                removed=None,
             ),
         ]
 
@@ -295,7 +299,9 @@ async def test_collector_force_refresh():
         assert cached is not None
 
         # Should NOT get from cache with force_refresh
-        cached = await get_cached_collectors(project, force_refresh=True, db_path=db_path)
+        cached = await get_cached_collectors(
+            project, force_refresh=True, db_path=db_path
+        )
         assert cached is None
 
 
@@ -307,14 +313,16 @@ async def test_index_force_refresh():
         await init_cache_db(db_path)
 
         url = "https://example.com/2023.01/"
-        month_end_date = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
+        month_end_date = datetime.datetime(
+            2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc
+        )
 
         collector = CollectorInfo(
             name="RRC00",
             project="ris",
             base_url="https://data.ris.ripe.net/rrc00/",
             installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
-            removed=None
+            removed=None,
         )
 
         file_entries = [
@@ -322,7 +330,7 @@ async def test_index_force_refresh():
                 collector=collector,
                 filename="updates.20230115.0000.gz",
                 url="https://data.ris.ripe.net/rrc00/2023.01/updates.20230115.0000.gz",
-                file_type="update"
+                file_type="update",
             ),
         ]
 
@@ -334,5 +342,7 @@ async def test_index_force_refresh():
         assert cached is not None
 
         # Should NOT get from cache with force_refresh
-        cached = await get_cached_index(url, month_end_date, force_refresh=True, db_path=db_path)
+        cached = await get_cached_index(
+            url, month_end_date, force_refresh=True, db_path=db_path
+        )
         assert cached is None
