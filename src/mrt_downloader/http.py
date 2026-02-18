@@ -453,9 +453,7 @@ class IndexWorker:
                     self.results.extend(file_entries)
             except Exception as e:
                 LOG.error(e)
-
-        # Mark all queue items as done
-        for _ in entries_to_process:
-            self.queue.task_done()
+            finally:
+                self.queue.task_done()
 
         return processed

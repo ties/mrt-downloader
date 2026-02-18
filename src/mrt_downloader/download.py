@@ -3,10 +3,11 @@ import datetime
 import itertools
 import logging
 from pathlib import Path
-from typing import Literal
+from typing import Generic, Literal, TypeVar
 
 import aiohttp
 import click
+from tqdm import tqdm
 
 from mrt_downloader.cache import (
     get_cache_db_path,
@@ -26,6 +27,24 @@ from mrt_downloader.models import (
 )
 
 LOG = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+class ProgressQueue(asyncio.Queue, Generic[T]):
+    """Queue that updates a tqdm progress bar on each task_done() call."""
+
+    def __init__(self, total: int, description: str, **kwargs):
+        super().__init__(**kwargs)
+        self._bar = tqdm(total=total, desc=description, unit="file")
+
+    def task_done(self):
+        super().task_done()
+        self._bar.update(1)
+
+    def close(self):
+        self._bar.close()
+
 
 BVIEW_DATE_TYPE = click.DateTime(
     formats=["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M"]
@@ -116,7 +135,9 @@ async def download_files(
             )
         )
 
-        index_queue: asyncio.Queue[CollectorIndexEntry] = asyncio.Queue()
+        index_queue: ProgressQueue[CollectorIndexEntry] = ProgressQueue(
+            total=len(indices), description="Indexing"
+        )
         for idx in indices:
             index_queue.put_nowait(idx)
 
@@ -129,6 +150,7 @@ async def download_files(
         )
         # run num_workers workers to get the indices.
         status = await asyncio.gather(*[index_worker.run() for _ in range(num_workers)])
+        index_queue.close()
 
         LOG.info(
             "Processed %d directory indexes for %d collectors",
@@ -136,28 +158,33 @@ async def download_files(
             len(collector_infos),
         )
 
-        queue: asyncio.Queue[CollectorFileEntry] = asyncio.Queue()
-        download_worker = DownloadWorker(target_dir, naming_strategy, session, queue)
-
-        # Add the relevant files to queue
-        collected_files = 0
+        # Add the relevant files to a list first to get the count
+        files_to_download = []
         for file in index_worker.results:
             if (
                 file.date >= start_time
                 and file.date <= end_time
                 and file.file_type in file_types
             ):
-                queue.put_nowait(file)
-                collected_files += 1
+                files_to_download.append(file)
 
         LOG.info(
             "Selected %d files for download out of %d",
-            collected_files,
+            len(files_to_download),
             len(index_worker.results),
         )
+
+        queue: ProgressQueue[CollectorFileEntry] = ProgressQueue(
+            total=len(files_to_download), description="Downloading"
+        )
+        download_worker = DownloadWorker(target_dir, naming_strategy, session, queue)
+
+        for file in files_to_download:
+            queue.put_nowait(file)
 
         # Now run the download workers.
         download_status = await asyncio.gather(
             *[download_worker.run() for _ in range(num_workers)]
         )
+        queue.close()
         LOG.info("Downloaded %d files", sum(download_status))

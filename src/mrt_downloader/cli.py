@@ -48,7 +48,7 @@ CLICK_DATETIME_TYPE = click.DateTime(
     help="Partition directories by [year]/[month]/[day]/[hour] (deprecated)",
     deprecated=True,
 )
-@click.option("--verbose", is_flag=True, help="Enable verbose logging")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 @click.option(
     "--bview-only",
     is_flag=True,

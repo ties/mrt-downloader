@@ -1,6 +1,6 @@
 ## v.0.0.8:
 
-  * ...
+  * Show a progress bar while downloading
 
 ## v0.0.7:
 
