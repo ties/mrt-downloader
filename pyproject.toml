@@ -7,9 +7,9 @@ requires-python = ">=3.11"
 readme = "README.md"
 packages = [{include = "mrt_downloader"}]
 dependencies = [
-    "aiohttp>=3.13.1",
-    "aiosqlite>=0.20.0",
-    "click>=8.3",
+    "aiohttp>=3.13.2",
+    "aiosqlite>=0.22.1",
+    "click>=8.3.1",
     "typing-extensions>=4.14.1",
 ]
 
