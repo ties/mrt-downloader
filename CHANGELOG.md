@@ -1,3 +1,7 @@
+## v0.0.9:
+
+  * ...
+
 ## v.0.0.8:
 
   * Clean up tempfile after IO fails
