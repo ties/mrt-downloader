@@ -80,7 +80,7 @@ class RetryHelper:
         for attempt in range(self.max_retries + 1):
             try:
                 return await operation()
-            except aiohttp.ClientError as e:
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 last_exception = e
 
                 # Don't retry on client errors (4xx)
@@ -117,7 +117,7 @@ class RetryHelper:
                     LOG.error(error_message)
             except Exception as e:
                 # Don't retry on unexpected errors
-                LOG.error(f"{operation_name} failed with unexpected error: {e}")
+                LOG.error(f"{operation_name} failed with unexpected error: {repr(e)}")
                 raise
 
         # This should only happen if all retries failed
