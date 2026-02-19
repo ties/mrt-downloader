@@ -80,7 +80,7 @@ class RetryHelper:
         for attempt in range(self.max_retries + 1):
             try:
                 return await operation()
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError) as e:
                 last_exception = e
 
                 # Don't retry on client errors (4xx)
