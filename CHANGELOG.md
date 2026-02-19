@@ -1,6 +1,6 @@
 ## v0.0.9:
 
-  * retry on timeout-error
+  * retry on timeout-error and connection-error
 
 ## v.0.0.8:
 
