@@ -1,6 +1,6 @@
 ## v0.0.9:
 
-  * ...
+  * retry on timeout-error
 
 ## v.0.0.8:
 
