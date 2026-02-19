@@ -1,3 +1,7 @@
+## v0.0.10:
+
+  * ...
+
 ## v0.0.9:
 
   * retry on timeout-error and connection-error
