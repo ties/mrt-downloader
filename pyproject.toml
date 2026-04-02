@@ -7,17 +7,17 @@ requires-python = ">=3.11"
 readme = "README.md"
 packages = [{include = "mrt_downloader"}]
 dependencies = [
-    "aiohttp>=3.13.2",
+    "aiohttp>=3.13.5",
     "aiosqlite>=0.22.1",
     "click>=8.3.1",
-    "typing-extensions>=4.14.1",
+    "typing-extensions>=4.15.0",
 ]
 
 [project.scripts]
 mrt-downloader = "mrt_downloader.cli:cli"
 
 [build-system]
-requires = ["uv_build>=0.7.8,<0.11.0"]
+requires = ["uv_build>=0.7.8,<0.12.0"]
 build-backend = "uv_build"
 
 [tool.isort]
@@ -33,8 +33,6 @@ lint.ignore = ["E501"]
 
 [tool.pytest]
 junit_family = "xunit2"
-
-[tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "auto"
 
@@ -42,8 +40,8 @@ asyncio_mode = "auto"
 
 [dependency-groups]
 dev = [
-    "pytest>=8.3.5",
-    "pytest-asyncio>=0.26.0",
-    "pytest-xdist>=3.6.1",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "pytest-xdist>=3.8.0",
 ]
 # known_third_party = []
