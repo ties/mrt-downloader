@@ -1,6 +1,6 @@
 ## v0.0.10:
 
-  * ...
+  * updated dependencies
 
 ## v0.0.9:
 
