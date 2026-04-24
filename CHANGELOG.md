@@ -1,6 +1,7 @@
 ## v0.0.10:
 
   * updated dependencies
+  * Allow limiting download parallelism (for high core count systems)
 
 ## v0.0.9:
 

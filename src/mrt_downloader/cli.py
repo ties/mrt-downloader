@@ -6,6 +6,7 @@ import asyncio
 import datetime
 import logging
 import multiprocessing
+import os
 import sys
 import warnings
 from pathlib import Path
@@ -89,8 +90,10 @@ CLICK_DATETIME_TYPE = click.DateTime(
 @click.option(
     "--num-threads",
     type=int,
-    default=multiprocessing.cpu_count(),
-    help="Number of download worker threads",
+    default=os.environ.get(
+        "MRT_DOWNLOADER_PARALLELISM", min(16, multiprocessing.cpu_count())
+    ),
+    help="Number of download worker threads (default: min(16, #cores). override using MRT_DOWNLOADER_PARALLELISM)",
 )
 @click.option(
     "--force-cache-refresh",
