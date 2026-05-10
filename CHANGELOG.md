@@ -1,3 +1,9 @@
+## v0.0.11:
+
+  * Add year/month/day partitioning, for paths like
+    `rrc26/2026/05/05/bview.20260505.2200.gz`
+
+
 ## v0.0.10:
 
   * updated dependencies
