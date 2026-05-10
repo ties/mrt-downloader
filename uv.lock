@@ -271,7 +271,7 @@ wheels = [
 
 [[package]]
 name = "mrt-downloader"
-version = "0.0.10"
+version = "0.0.11"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -291,7 +291,7 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.5" },
     { name = "aiosqlite", specifier = ">=0.22.1" },
-    { name = "click", specifier = ">=8.3.2" },
+    { name = "click", specifier = ">=8.3.3" },
     { name = "typing-extensions", specifier = ">=4.15.0" },
 ]
 
