@@ -3,6 +3,7 @@ from pathlib import Path
 from mrt_downloader.files import (
     ByCollectorPartitionedStategy,
     ByMonthStrategy,
+    ByYearMonthDayStrategy,
     PrefixCollectorByHourStrategy,
     PrefixCollectorStrategy,
     split_on_dash_except_route_views,
@@ -50,6 +51,29 @@ def test_collector_partitioned_yearmonth() -> None:
         "hour": "23",
         "minute": "45",
         "filename": "updates.20250714.2345.bz2",
+    }
+
+
+def test_collector_partitioned_year_month_day() -> None:
+    """Test parsing paths prefixed by collector, followed by year, month, day, then files in dir"""
+    rrc26 = [
+        Path("rrc26"),
+        Path("2026"),
+        Path("05"),
+        Path("05"),
+        Path("bview.20260505.1900.gz"),
+    ]
+
+    strategy = ByCollectorPartitionedStategy(ByYearMonthDayStrategy())
+
+    assert strategy.parse(rrc26) == {
+        "collector": "rrc26",
+        "year": "2026",
+        "month": "5",
+        "day": "5",
+        "hour": "19",
+        "minute": "0",
+        "filename": "bview.20260505.1900.gz",
     }
 
 
