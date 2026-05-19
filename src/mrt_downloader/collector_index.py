@@ -112,7 +112,9 @@ def process_index_entry(
         filename = os.path.basename(path)
 
         match filename:
-            case f if f.startswith("bview.") or f.startswith("rib."):
+            case f if (
+                f.startswith("bview.") or f.startswith("view.") or f.startswith("rib.")
+            ):
                 file_type = "rib"
             case f if f.startswith("updates."):
                 file_type = "update"
