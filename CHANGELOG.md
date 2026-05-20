@@ -1,3 +1,5 @@
+## v0.0.13:
+
 ## v0.0.12:
 
   * Improve SQLite cache lock handling so cache contention does not abort downloads.
