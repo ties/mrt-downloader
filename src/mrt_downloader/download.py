@@ -51,8 +51,11 @@ async def download_files(
 
     # Initialize cache database
     db_path = get_cache_db_path()
-    await init_cache_db(db_path)
-    LOG.info(f"Using index cache at {db_path}")
+    try:
+        await init_cache_db(db_path)
+        LOG.info(f"Using index cache at {db_path}")
+    except Exception as e:
+        LOG.warning("Index cache is unavailable at %s: %s", db_path, e)
 
     file_types = frozenset(
         ["rib"] if rib_only else ["update"] if update_only else ["rib", "update"]

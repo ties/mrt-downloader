@@ -1,11 +1,15 @@
 """Tests for the index caching functionality."""
 
+import asyncio
 import datetime
+import logging
+import sqlite3
 import tempfile
 from pathlib import Path
 
 import pytest
 
+import mrt_downloader.cache as cache
 from mrt_downloader.cache import (
     get_cached_collectors,
     get_cached_index,
@@ -16,6 +20,40 @@ from mrt_downloader.cache import (
     store_index,
 )
 from mrt_downloader.models import CollectorFileEntry, CollectorInfo
+
+
+def make_test_collector(name: str = "RRC00") -> CollectorInfo:
+    return CollectorInfo(
+        name=name,
+        project="ris",
+        base_url=f"https://data.ris.ripe.net/{name.lower()}/",
+        installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
+        removed=None,
+    )
+
+
+def make_test_file_entries(
+    index_number: int,
+    collector: CollectorInfo | None = None,
+) -> list[CollectorFileEntry]:
+    if collector is None:
+        collector = make_test_collector()
+
+    return [
+        CollectorFileEntry(
+            collector=collector,
+            filename=f"updates.20230115.{index_number:04}.gz",
+            url=f"{collector.base_url}2023.01/updates.20230115.{index_number:04}.gz",
+            file_type="update",
+        )
+    ]
+
+
+def set_fast_sqlite_lock_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cache, "SQLITE_CONNECT_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(cache, "SQLITE_BUSY_TIMEOUT_MS", 10)
+    monkeypatch.setattr(cache, "SQLITE_LOCK_RETRIES", 3)
+    monkeypatch.setattr(cache, "SQLITE_LOCK_RETRY_INITIAL_DELAY_SECONDS", 0.01)
 
 
 @pytest.mark.asyncio
@@ -346,3 +384,107 @@ async def test_index_force_refresh():
             url, month_end_date, force_refresh=True, db_path=db_path
         )
         assert cached is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_store_index_calls_are_serialized():
+    """Test that concurrent cache writes do not fail with database lock errors."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        month_end_date = datetime.datetime(
+            2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc
+        )
+
+        async def store_one(index_number: int) -> None:
+            await store_index(
+                f"https://example.com/2023.01/{index_number}/",
+                make_test_file_entries(index_number),
+                month_end_date,
+                db_path,
+            )
+
+        await asyncio.gather(*(store_one(index_number) for index_number in range(20)))
+
+        for index_number in range(20):
+            cached_entries = await get_cached_index(
+                f"https://example.com/2023.01/{index_number}/",
+                month_end_date,
+                db_path=db_path,
+            )
+            assert cached_entries is not None
+            assert len(cached_entries) == 1
+            assert cached_entries[0].filename == (
+                f"updates.20230115.{index_number:04}.gz"
+            )
+
+
+@pytest.mark.asyncio
+async def test_store_index_retries_when_database_is_temporarily_locked(monkeypatch):
+    """Test that a temporary external SQLite write lock is retried."""
+    set_fast_sqlite_lock_retry(monkeypatch)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        await init_cache_db(db_path)
+
+        lock_conn = sqlite3.connect(db_path)
+        try:
+            lock_conn.execute("BEGIN IMMEDIATE")
+
+            month_end_date = datetime.datetime(
+                2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc
+            )
+            task = asyncio.create_task(
+                store_index(
+                    "https://example.com/2023.01/locked/",
+                    make_test_file_entries(1),
+                    month_end_date,
+                    db_path,
+                )
+            )
+
+            await asyncio.sleep(0.05)
+            lock_conn.rollback()
+            await task
+        finally:
+            lock_conn.close()
+
+        cached_entries = await get_cached_index(
+            "https://example.com/2023.01/locked/",
+            month_end_date,
+            db_path=db_path,
+        )
+        assert cached_entries is not None
+        assert cached_entries[0].filename == "updates.20230115.0001.gz"
+
+
+@pytest.mark.asyncio
+async def test_store_index_does_not_raise_when_database_stays_locked(
+    monkeypatch, caplog
+):
+    """Test that persistent cache lock failures are logged but not raised."""
+    set_fast_sqlite_lock_retry(monkeypatch)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        await init_cache_db(db_path)
+
+        lock_conn = sqlite3.connect(db_path)
+        try:
+            lock_conn.execute("BEGIN IMMEDIATE")
+
+            caplog.set_level(logging.WARNING, logger="mrt_downloader.cache")
+            await store_index(
+                "https://example.com/2023.01/locked/",
+                make_test_file_entries(1),
+                datetime.datetime(
+                    2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc
+                ),
+                db_path,
+            )
+        finally:
+            lock_conn.rollback()
+            lock_conn.close()
+
+        assert "Failed to store index cache" in caplog.text
+        assert "database is locked" in caplog.text
