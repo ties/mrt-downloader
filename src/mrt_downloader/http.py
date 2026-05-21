@@ -352,14 +352,21 @@ class DownloadWorker:
                 LOG.debug("HTTP %d %.3fs", response.status, time.time() - t0)
                 if response.status == 200:
                     # Download to temporary file first
-                    with tempfile.NamedTemporaryFile(
-                        dir=target_file.parent, suffix=".tmp"
-                    ) as f:
-                        async for data in response.content.iter_chunked(131072):
-                            f.write(data)
-                        f.flush()
-                        Path(f.name).replace(target_file)
-                        f.delete = False
+                    tmp_file: Path | None = None
+                    try:
+                        with tempfile.NamedTemporaryFile(
+                            dir=target_file.parent, suffix=".tmp", delete=False
+                        ) as f:
+                            tmp_file = Path(f.name)
+                            async for data in response.content.iter_chunked(131072):
+                                f.write(data)
+                            f.flush()
+
+                        tmp_file.replace(target_file)
+                        tmp_file = None
+                    finally:
+                        if tmp_file is not None:
+                            tmp_file.unlink(missing_ok=True)
 
                     # Get last modified time from the response
                     last_modified = parse_last_modified(response)
