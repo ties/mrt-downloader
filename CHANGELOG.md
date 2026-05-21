@@ -1,5 +1,9 @@
 ## v0.0.13:
 
+  * Swap between {archive, archive2}.routeviews.org for downloads
+  * Handle unparseable filenames in listing
+  * Fix exception on python 3.11
+
 ## v0.0.12:
 
   * Improve SQLite cache lock handling so cache contention does not abort downloads.
