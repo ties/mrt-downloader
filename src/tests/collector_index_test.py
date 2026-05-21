@@ -1,5 +1,6 @@
 import datetime
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,30 @@ RRC08_COLLECTOR = CollectorInfo(
     installed=datetime.datetime(2002, 5, 1, 0, 0, 0, tzinfo=datetime.UTC),
     removed=datetime.datetime(2004, 10, 1, 0, 0, 0, tzinfo=datetime.UTC),
 )
+
+
+def test_process_index_entry_skips_malformed_mrt_filenames(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    index_entry = CollectorIndexEntry(
+        RRC08_COLLECTOR,
+        "https://data.ris.ripe.net/rrc08/2026.05/",
+        datetime.datetime(2026, 5, 1, tzinfo=datetime.UTC),
+        file_types=frozenset({"update"}),
+    )
+    html = """
+    <a href="updates.20260521.1500.gz">updates.20260521.1500.gz</a>
+    <a href="updates.20260521.1503.bad.gz">updates.20260521.1503.bad.gz</a>
+    """
+
+    with caplog.at_level(logging.WARNING):
+        entries = process_index_entry(index_entry, html)
+
+    assert [entry.filename for entry in entries] == ["updates.20260521.1500.gz"]
+    assert entries[0].date == datetime.datetime(2026, 5, 21, 15, tzinfo=datetime.UTC)
+    assert (
+        "Invalid MRT filename for updates.20260521.1503.bad.gz, skipping" in caplog.text
+    )
 
 
 def test_index_files_for_collector_routeviews(

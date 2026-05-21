@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import itertools
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Literal
 
@@ -30,6 +31,29 @@ LOG = logging.getLogger(__name__)
 BVIEW_DATE_TYPE = click.DateTime(
     formats=["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M"]
 )
+
+
+def select_files_for_download(
+    files: Iterable[CollectorFileEntry],
+    start_time: datetime.datetime,
+    end_time: datetime.datetime,
+    file_types: frozenset[Literal["rib", "update"]],
+) -> list[CollectorFileEntry]:
+    selected_files = []
+    for file in files:
+        if file.file_type not in file_types:
+            continue
+
+        try:
+            file_date = file.date
+        except ValueError as e:
+            LOG.warning("Skipping file with invalid MRT filename: %s", e)
+            continue
+
+        if file_date >= start_time and file_date <= end_time:
+            selected_files.append(file)
+
+    return selected_files
 
 
 async def download_files(
@@ -143,19 +167,15 @@ async def download_files(
         download_worker = DownloadWorker(target_dir, naming_strategy, session, queue)
 
         # Add the relevant files to queue
-        collected_files = 0
-        for file in index_worker.results:
-            if (
-                file.date >= start_time
-                and file.date <= end_time
-                and file.file_type in file_types
-            ):
-                queue.put_nowait(file)
-                collected_files += 1
+        selected_files = select_files_for_download(
+            index_worker.results, start_time, end_time, file_types
+        )
+        for file in selected_files:
+            queue.put_nowait(file)
 
         LOG.info(
             "Selected %d files for download out of %d",
-            collected_files,
+            len(selected_files),
             len(index_worker.results),
         )
 
