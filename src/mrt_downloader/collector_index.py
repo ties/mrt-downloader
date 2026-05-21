@@ -10,7 +10,12 @@ import aiohttp
 import click
 from typing_extensions import deprecated
 
-from mrt_downloader.models import CollectorFileEntry, CollectorIndexEntry, CollectorInfo
+from mrt_downloader.models import (
+    CollectorFileEntry,
+    CollectorIndexEntry,
+    CollectorInfo,
+    parse_mrt_filename_date,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -121,6 +126,10 @@ def process_index_entry(
             case _:
                 LOG.warning("Unknown file type for %s, skipping", filename)
                 continue
+
+        if parse_mrt_filename_date(filename) is None:
+            LOG.warning("Invalid MRT filename for %s, skipping", filename)
+            continue
 
         result.append(
             CollectorFileEntry(

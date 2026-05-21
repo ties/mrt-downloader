@@ -1,16 +1,12 @@
 import logging
 import pathlib
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
 
 from mrt_downloader.http import FileNamingStrategy
-from mrt_downloader.models import CollectorFileEntry
+from mrt_downloader.models import CollectorFileEntry, parse_mrt_filename_date
 
 LOG = logging.getLogger(__name__)
-
-FILENAME_PATTERN = re.compile(r"^(?:bview|updates|rib)\.(\d{8}\.\d{4})\..*$")
 
 
 @dataclass
@@ -25,20 +21,13 @@ class ParsedFilenameSegments:
 def parse_standard_filename(filename: str) -> ParsedFilenameSegments:
     year, month, day, hour, minute = None, None, None, None, None
 
-    try:
-        match = FILENAME_PATTERN.match(filename)
-        if match:
-            # Extract the datetime segment (e.g., '20240211.1600')
-            datetime_segment = match.group(1)
-
-            # Parse using datetime.strptime
-            dt = datetime.strptime(datetime_segment, "%Y%m%d.%H%M")
-
-            year = str(dt.year)
-            day = str(dt.day)
-            hour = str(dt.hour)
-            minute = str(dt.minute)
-    except ValueError:
+    dt = parse_mrt_filename_date(filename)
+    if dt:
+        year = str(dt.year)
+        day = str(dt.day)
+        hour = str(dt.hour)
+        minute = str(dt.minute)
+    else:
         LOG.debug(f"Filename does not match expected pattern: {filename}")
 
     return ParsedFilenameSegments(year, month, day, hour, minute)

@@ -1,7 +1,25 @@
 import datetime
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+
+MRT_FILENAME_PATTERN = re.compile(
+    r"^(?:bview|view|updates|rib)\.(\d{8}\.\d{4})\.(?:gz|bz2)$"
+)
+
+
+def parse_mrt_filename_date(filename: str) -> datetime.datetime | None:
+    match = MRT_FILENAME_PATTERN.match(filename)
+    if not match:
+        return None
+
+    try:
+        return datetime.datetime.strptime(match.group(1), "%Y%m%d.%H%M").replace(
+            tzinfo=datetime.UTC
+        )
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -38,10 +56,12 @@ class CollectorFileEntry:
 
         @raise ValueError if the date cannot be parsed
         """
-        date_tokens = ".".join(self.filename.split(".")[-3:-1])
-        return datetime.datetime.strptime(date_tokens, "%Y%m%d.%H%M").replace(
-            tzinfo=datetime.UTC
-        )
+        date = parse_mrt_filename_date(self.filename)
+        if date is None:
+            raise ValueError(
+                f"Could not parse MRT filename date from {self.filename!r}"
+            )
+        return date
 
 
 @dataclass
