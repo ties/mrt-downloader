@@ -1,5 +1,7 @@
 ## v0.0.14 
 
+  * Support hour subdirs with `ByYearMonthDayHourStrategy`.
+
 
 ## v0.0.13:
 
