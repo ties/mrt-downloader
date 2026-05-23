@@ -163,6 +163,42 @@ class ByYearMonthDayStrategy(FileNamingStrategy):
         }
 
 
+class ByYearMonthDayHourStrategy(FileNamingStrategy):
+    """
+    Paths like
+
+    ```
+    rrc26/2026/05/21/21/bview.20260521.0400.gz
+    ```
+    """
+
+    def get_path(self, path: pathlib.Path, entry: CollectorFileEntry) -> pathlib.Path:
+        return (
+            path
+            / entry.date.strftime("%Y")
+            / entry.date.strftime("%m")
+            / entry.date.strftime("%d")
+            / entry.date.strftime("%H")
+            / entry.filename
+        )
+
+    def parse(self, path: Sequence[str | pathlib.Path]) -> dict[str, str | None]:
+        year = int(str(path[0]))
+        month = int(str(path[1]))
+        day = int(str(path[2]))
+        hour = str(path[3])
+        segments = parse_standard_filename(str(path[4]))
+
+        return {
+            "year": str(year),
+            "month": str(month),
+            "filename": str(path[4]),
+            "day": str(day),
+            "hour": hour,
+            "minute": segments.minute,
+        }
+
+
 class ByHourStrategy(FileNamingStrategy):
     def get_path(self, path: pathlib.Path, entry: CollectorFileEntry) -> pathlib.Path:
         return (
