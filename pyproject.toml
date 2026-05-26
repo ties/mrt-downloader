@@ -9,7 +9,7 @@ packages = [{include = "mrt_downloader"}]
 dependencies = [
     "aiohttp>=3.13.5",
     "aiosqlite>=0.22.1",
-    "click>=8.4.0",
+    "click>=8.4.1",
     "typing-extensions>=4.15.0",
 ]
 
