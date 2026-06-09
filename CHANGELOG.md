@@ -3,6 +3,7 @@
   * Use `https://api.routeviews.org/meta/collectors` for routeviews collector
     index because that has download paths.
   * Retry on index failures and retry on 429.
+  * Update dependencies
 
 ## v0.0.14 
 
