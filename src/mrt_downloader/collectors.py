@@ -61,25 +61,15 @@ async def get_ripe_ris_collectors(
     return await retry_helper.execute(fetch_collectors, "Fetch RIPE RIS collectors")
 
 
-def _parse_iso8601_datetime(value: str) -> datetime.datetime:
-    return datetime.datetime.fromisoformat(value)
-
-
 def parse_routeviews_collectors(obj: dict[str, Any]) -> list[CollectorInfo]:
     collectors: list[CollectorInfo] = []
     for name, collector in obj["data"]["collectors"].items():
         data_types = collector.get("dataTypes", {})
         oldest_dump_times = [
-            _parse_iso8601_datetime(data_type["oldestDumpTimeISO8601"])
+            datetime.datetime.fromisoformat(data_type["oldestDumpTimeISO8601"])
             for data_type in data_types.values()
             if data_type.get("oldestDumpTimeISO8601")
         ]
-        latest_dump_times = [
-            _parse_iso8601_datetime(data_type["latestDumpTimeISO8601"])
-            for data_type in data_types.values()
-            if data_type.get("latestDumpTimeISO8601")
-        ]
-
         if not oldest_dump_times:
             LOG.warning(
                 "Skipping RouteViews collector %s without oldest dump time", name
@@ -92,7 +82,7 @@ def parse_routeviews_collectors(obj: dict[str, Any]) -> list[CollectorInfo]:
                 project="routeviews",
                 base_url=collector["baseURL"],
                 installed=min(oldest_dump_times),
-                removed=max(latest_dump_times) if latest_dump_times else None,
+                removed=None,
             )
         )
 

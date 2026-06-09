@@ -34,7 +34,7 @@ def ris_collectors() -> list[CollectorInfo]:
         return parse_ripe_ris_collectors(data)
 
 
-def test_parse_routeviews_collectors_uses_metadata_availability(
+def test_parse_routeviews_collectors_keeps_active_collectors_unbounded(
     routeviews_collectors: list[CollectorInfo],
 ) -> None:
     bknix = [c for c in routeviews_collectors if c.name == "route-views.bknix"][0]
@@ -44,7 +44,7 @@ def test_parse_routeviews_collectors_uses_metadata_availability(
     assert bknix.installed == datetime.datetime(
         2019, 10, 28, 23, 15, tzinfo=datetime.UTC
     )
-    assert bknix.removed == datetime.datetime(2026, 6, 9, 12, 45, tzinfo=datetime.UTC)
+    assert bknix.removed is None
 
 
 BKNIX_COLLECTOR = CollectorInfo(
@@ -127,6 +127,23 @@ def test_index_files_for_routeviews_includes_first_partial_month(
     assert [entry.url for entry in index_files] == [
         "https://archive.routeviews.org/route-views8/bgpdata/2025.03/RIBS/",
         "https://archive.routeviews.org/route-views8/bgpdata/2025.03/UPDATES/",
+    ]
+
+
+def test_index_files_for_routeviews_includes_month_after_latest_dump_metadata(
+    routeviews_collectors: list[CollectorInfo],
+) -> None:
+    bknix = [c for c in routeviews_collectors if c.name == "route-views.bknix"][0]
+
+    index_files = index_files_for_collector(
+        bknix,
+        start_time=datetime.datetime(2026, 7, 1, tzinfo=datetime.UTC),
+        end_time=datetime.datetime(2026, 7, 1, tzinfo=datetime.UTC),
+    )
+
+    assert [entry.url for entry in index_files] == [
+        "https://archive.routeviews.org/route-views.bknix/bgpdata/2026.07/RIBS/",
+        "https://archive.routeviews.org/route-views.bknix/bgpdata/2026.07/UPDATES/",
     ]
 
 
