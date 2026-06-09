@@ -82,13 +82,15 @@ class FakeSession:
         return self.responses[url].pop(0)
 
 
-def _client_error(status: int, url: str) -> aiohttp.ClientResponseError:
+def _client_error(
+    status: int, url: str, headers: dict[str, str] | None = None
+) -> aiohttp.ClientResponseError:
     return aiohttp.ClientResponseError(
         request_info=SimpleNamespace(real_url=url),
         history=(),
         status=status,
         message=f"HTTP {status}",
-        headers={},
+        headers=headers or {},
     )
 
 
@@ -204,6 +206,90 @@ async def test_retry_helper_keeps_non_retryable_404_final() -> None:
             "Download example",
             ("https://data.ris.ripe.net/file",),
         )
+
+
+@pytest.mark.asyncio
+async def test_retry_helper_retries_429_by_default() -> None:
+    sleeps: list[float] = []
+    attempts = 0
+
+    async def sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    helper = RetryHelper(
+        max_retries=1,
+        initial_delay=2,
+        random_jitter=lambda delay: delay / 2,
+        sleep=sleep,
+    )
+
+    async def operation(url: str) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise _client_error(429, url)
+        return url
+
+    result = await helper.execute_with_urls(
+        operation,
+        "Download example",
+        ("https://api.routeviews.org/meta/collectors",),
+    )
+
+    assert result == "https://api.routeviews.org/meta/collectors"
+    assert attempts == 2
+    assert sleeps == [3.0]
+
+
+@pytest.mark.asyncio
+async def test_retry_helper_uses_retry_after_as_minimum_delay_for_429() -> None:
+    sleeps: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    helper = RetryHelper(
+        max_retries=1,
+        initial_delay=2,
+        random_jitter=lambda delay: delay,
+        sleep=sleep,
+    )
+
+    async def operation(url: str) -> str:
+        raise _client_error(429, url, headers={"Retry-After": "5"})
+
+    with pytest.raises(aiohttp.ClientResponseError):
+        await helper.execute_with_urls(
+            operation,
+            "Download example",
+            ("https://api.routeviews.org/meta/collectors",),
+        )
+
+    assert sleeps == [10.0]
+
+
+@pytest.mark.asyncio
+async def test_retry_helper_still_does_not_retry_other_client_errors() -> None:
+    attempts = 0
+
+    async def sleep(_delay: float) -> None:
+        raise AssertionError("unexpected retry sleep")
+
+    helper = RetryHelper(max_retries=1, initial_delay=0, sleep=sleep)
+
+    async def operation(url: str) -> str:
+        nonlocal attempts
+        attempts += 1
+        raise _client_error(403, url)
+
+    with pytest.raises(aiohttp.ClientResponseError):
+        await helper.execute_with_urls(
+            operation,
+            "Download example",
+            ("https://api.routeviews.org/meta/collectors",),
+        )
+
+    assert attempts == 1
 
 
 @pytest.mark.asyncio

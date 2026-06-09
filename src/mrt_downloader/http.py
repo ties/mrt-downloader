@@ -6,7 +6,7 @@ import random
 import tempfile
 import time
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Awaitable, Callable, Iterable, Literal, Sequence, TypeVar
@@ -34,9 +34,29 @@ except PackageNotFoundError:
     __version__ = "development"
 
 USER_AGENT = f"mrt-downloader/{__version__} https://github.com/ties/mrt-downloader"
+DEFAULT_RETRY_CLIENT_STATUSES = frozenset((429,))
 MIRRORED_FILE_RETRY_CLIENT_STATUSES = frozenset((404,))
 
 T = TypeVar("T")
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    if value is None:
+        return None
+
+    try:
+        delay = float(value)
+    except ValueError:
+        try:
+            retry_at = email.utils.parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        delay = (retry_at - datetime.now(UTC)).total_seconds()
+
+    return max(0.0, delay)
 
 
 def retry_client_statuses_for_urls(urls: Sequence[str]) -> frozenset[int]:
@@ -51,11 +71,12 @@ class RetryHelper:
     Implements retry logic with exponential backoff for network operations:
     - Initial delay: 2 seconds
     - Backoff multiplier: 2x (2s, 4s, 8s, 16s)
+    - Additive jitter: random delay from zero to the base delay
     - Default max retries: 4
 
     Retries on network errors (timeouts, connection errors, DNS failures).
-    Does not retry on HTTP 4xx errors (client errors), unless a caller marks a
-    specific client status as retryable.
+    Retries on HTTP 429 by default. Does not retry on other HTTP 4xx errors
+    (client errors), unless a caller marks a specific client status as retryable.
     """
 
     def __init__(
@@ -63,6 +84,8 @@ class RetryHelper:
         max_retries: int = 4,
         initial_delay: float = 2.0,
         random_start: Callable[[int], int] | None = None,
+        random_jitter: Callable[[float], float] | None = None,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
     ):
         """Initialize the retry helper.
 
@@ -70,10 +93,25 @@ class RetryHelper:
             max_retries: Maximum number of retry attempts (default: 4)
             initial_delay: Initial delay in seconds before first retry (default: 2.0)
             random_start: Optional random starting index provider for mirror rotation
+            random_jitter: Optional jitter provider for retry delay tests
+            sleep: Optional async sleep function for retry delay tests
         """
         self.max_retries = max_retries
         self.initial_delay = initial_delay
         self.random_start = random_start or random.randrange
+        self.random_jitter = random_jitter or (lambda delay: random.uniform(0, delay))
+        self.sleep = sleep or asyncio.sleep
+
+    def _retry_delay(self, attempt: int, error: BaseException) -> float:
+        base_delay = self.initial_delay * (2**attempt)
+        if isinstance(error, aiohttp.ClientResponseError) and error.status == 429:
+            retry_after = _parse_retry_after(
+                error.headers.get("Retry-After") if error.headers else None
+            )
+            if retry_after is not None:
+                base_delay = max(base_delay, retry_after)
+
+        return base_delay + self.random_jitter(base_delay)
 
     async def execute(
         self,
@@ -115,6 +153,9 @@ class RetryHelper:
 
         start_index = self.random_start(len(urls)) if len(urls) > 1 else 0
         last_exception = None
+        retryable_client_statuses = (
+            DEFAULT_RETRY_CLIENT_STATUSES | retry_client_statuses
+        )
 
         for attempt in range(self.max_retries + 1):
             attempt_url = urls[(start_index + attempt) % len(urls)]
@@ -124,17 +165,17 @@ class RetryHelper:
                 last_exception = e
 
                 if isinstance(e, aiohttp.ClientResponseError) and 400 <= e.status < 500:
-                    if e.status not in retry_client_statuses:
+                    if e.status not in retryable_client_statuses:
                         LOG.error(f"{operation_name} failed with client error: {e}")
                         raise
 
                 # Calculate backoff delay
                 if attempt < self.max_retries:
-                    delay = self.initial_delay * (2**attempt)
+                    delay = self._retry_delay(attempt, e)
                     target = f" via {attempt_url}" if attempt_url else ""
                     message = (
                         f"{operation_name}{target} failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
-                        f"Retrying in {delay}s..."
+                        f"Retrying in {delay:.2f}s..."
                     )
 
                     # Color based on attempt number
@@ -151,7 +192,7 @@ class RetryHelper:
                         # Third+ retry - red
                         click.echo(click.style(f"WARNING: {message}", fg="red"))
 
-                    await asyncio.sleep(delay)
+                    await self.sleep(delay)
                 else:
                     error_message = (
                         f"{operation_name} failed after {self.max_retries + 1} "
