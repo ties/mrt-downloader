@@ -5,6 +5,7 @@ from typing import Any
 
 import aiohttp
 
+from mrt_downloader.http import RetryHelper
 from mrt_downloader.models import CollectorInfo
 
 LOG = logging.getLogger(__name__)
@@ -47,12 +48,17 @@ async def get_ripe_ris_collectors(
     """
     Get the list of RIPE RIS collectors.
     """
-    async with session.get(
-        "https://stat.ripe.net/data/rrc-info/data.json", raise_for_status=True
-    ) as resp:
-        data = await resp.json()
+    retry_helper = RetryHelper()
 
-        return parse_ripe_ris_collectors(data)
+    async def fetch_collectors() -> list[CollectorInfo]:
+        async with session.get(
+            "https://stat.ripe.net/data/rrc-info/data.json", raise_for_status=True
+        ) as resp:
+            data = await resp.json()
+
+            return parse_ripe_ris_collectors(data)
+
+    return await retry_helper.execute(fetch_collectors, "Fetch RIPE RIS collectors")
 
 
 def _parse_iso8601_datetime(value: str) -> datetime.datetime:
@@ -99,13 +105,18 @@ async def get_routeviews_collectors(
     """
     Get the list of RouteViews collectors.
     """
-    async with session.get(
-        "https://api.routeviews.org/meta/collectors", raise_for_status=True
-    ) as resp:
-        data = await resp.json(content_type=None)
-        LOG.debug(
-            "RouteViews collector metadata API response:\n%s",
-            json.dumps(data, indent=2, sort_keys=True),
-        )
+    retry_helper = RetryHelper()
 
-        return parse_routeviews_collectors(data)
+    async def fetch_collectors() -> list[CollectorInfo]:
+        async with session.get(
+            "https://api.routeviews.org/meta/collectors", raise_for_status=True
+        ) as resp:
+            data = await resp.json(content_type=None)
+            LOG.debug(
+                "RouteViews collector metadata API response:\n%s",
+                json.dumps(data, indent=2, sort_keys=True),
+            )
+
+            return parse_routeviews_collectors(data)
+
+    return await retry_helper.execute(fetch_collectors, "Fetch RouteViews collectors")
