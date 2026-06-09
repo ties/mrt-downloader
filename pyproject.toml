@@ -7,9 +7,9 @@ requires-python = ">=3.11"
 readme = "README.md"
 packages = [{include = "mrt_downloader"}]
 dependencies = [
-    "aiohttp>=3.13.5",
+    "aiohttp>=3.14.1",
     "aiosqlite>=0.22.1",
-    "click>=8.4.0",
+    "click>=8.4.1",
     "typing-extensions>=4.15.0",
 ]
 
@@ -41,7 +41,7 @@ asyncio_mode = "auto"
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
-    "pytest-asyncio>=1.3.0",
+    "pytest-asyncio>=1.4.0",
     "pytest-xdist>=3.8.0",
 ]
 # known_third_party = []
