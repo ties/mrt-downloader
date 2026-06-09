@@ -1,6 +1,7 @@
 ## v0.0.15
 
-  * 
+  * Use `https://api.routeviews.org/meta/collectors` for routeviews collector
+    index because that has download paths.
 
 ## v0.0.14 
 
