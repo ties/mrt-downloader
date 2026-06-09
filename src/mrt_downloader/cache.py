@@ -28,6 +28,7 @@ SQLITE_CONNECT_TIMEOUT_SECONDS = 30.0
 SQLITE_BUSY_TIMEOUT_MS = 30_000
 SQLITE_LOCK_RETRIES = 5
 SQLITE_LOCK_RETRY_INITIAL_DELAY_SECONDS = 0.25
+CURRENT_CACHE_SCHEMA_VERSION = 2
 
 _CACHE_WRITE_LOCKS: dict[tuple[int, str], asyncio.Lock] = {}
 
@@ -125,6 +126,9 @@ async def init_cache_db(db_path: Optional[Path] = None) -> None:
         async with _connect_cache_db(db_path) as db:
             await db.execute("PRAGMA journal_mode = WAL")
             await db.execute("PRAGMA synchronous = NORMAL")
+            async with db.execute("PRAGMA user_version") as cursor:
+                row = await cursor.fetchone()
+                cache_version = int(row[0]) if row else 0
 
             # Table for storing collectors (cached for 24h)
             await db.execute("""
@@ -170,6 +174,29 @@ async def init_cache_db(db_path: Optional[Path] = None) -> None:
                 CREATE INDEX IF NOT EXISTS idx_file_cache_index_url
                 ON file_cache(index_url)
             """)
+
+            if cache_version < 2 <= CURRENT_CACHE_SCHEMA_VERSION:
+                await db.execute(
+                    "DELETE FROM collector_cache WHERE project = 'routeviews'"
+                )
+                await db.execute(
+                    """
+                    DELETE FROM index_cache
+                    WHERE url LIKE 'https://archive.routeviews.org/%'
+                       OR url LIKE 'https://archive2.routeviews.org/%'
+                    """
+                )
+                LOG.info(
+                    "Invalidated RouteViews cache entries while migrating cache "
+                    "from version %d to %d",
+                    cache_version,
+                    CURRENT_CACHE_SCHEMA_VERSION,
+                )
+
+            if cache_version < CURRENT_CACHE_SCHEMA_VERSION:
+                await db.execute(
+                    f"PRAGMA user_version = {CURRENT_CACHE_SCHEMA_VERSION}"
+                )
 
             await db.commit()
 

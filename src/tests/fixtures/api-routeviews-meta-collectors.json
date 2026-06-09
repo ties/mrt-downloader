@@ -1,0 +1,82 @@
+{
+  "timeISO8601": "2026-06-09T13:00:10Z",
+  "data": {
+    "collectors": {
+      "route-views.flix": {
+        "project": "routeviews",
+        "baseURL": "https://archive.routeviews.org/route-views.flix/bgpdata/",
+        "kafkaTopics": "^routeviews\\.flix\\.([^.]+)\\.bmp_raw$",
+        "dataTypes": {
+          "ribs": {
+            "dumpPeriod": 7200,
+            "dumpDuration": 120,
+            "oldestDumpTime": "1516377600",
+            "oldestDumpTimeISO8601": "2018-01-19T16:00:00Z",
+            "latestDumpTime": "1781006400",
+            "latestDumpTimeISO8601": "2026-06-09T12:00:00Z",
+            "latestDumpFile": "https://archive.routeviews.org/route-views.flix/bgpdata/2026.06/RIBS/rib.20260609.1200.bz2"
+          },
+          "updates": {
+            "dumpPeriod": 900,
+            "dumpDuration": 900,
+            "oldestDumpTime": "1516383900",
+            "oldestDumpTimeISO8601": "2018-01-19T17:45:00Z",
+            "latestDumpTime": "1781009100",
+            "latestDumpTimeISO8601": "2026-06-09T12:45:00Z",
+            "latestDumpFile": "https://archive.routeviews.org/route-views.flix/bgpdata/2026.06/UPDATES/updates.20260609.1245.bz2"
+          }
+        }
+      },
+      "route-views.bknix": {
+        "project": "routeviews",
+        "baseURL": "https://archive.routeviews.org/route-views.bknix/bgpdata/",
+        "kafkaTopics": "^routeviews\\.bknix\\.([^.]+)\\.bmp_raw$",
+        "dataTypes": {
+          "ribs": {
+            "dumpPeriod": 7200,
+            "dumpDuration": 120,
+            "oldestDumpTime": "1572307200",
+            "oldestDumpTimeISO8601": "2019-10-29T00:00:00Z",
+            "latestDumpTime": "1781006400",
+            "latestDumpTimeISO8601": "2026-06-09T12:00:00Z",
+            "latestDumpFile": "https://archive.routeviews.org/route-views.bknix/bgpdata/2026.06/RIBS/rib.20260609.1200.bz2"
+          },
+          "updates": {
+            "dumpPeriod": 900,
+            "dumpDuration": 900,
+            "oldestDumpTime": "1572304500",
+            "oldestDumpTimeISO8601": "2019-10-28T23:15:00Z",
+            "latestDumpTime": "1781009100",
+            "latestDumpTimeISO8601": "2026-06-09T12:45:00Z",
+            "latestDumpFile": "https://archive.routeviews.org/route-views.bknix/bgpdata/2026.06/UPDATES/updates.20260609.1245.bz2"
+          }
+        }
+      },
+      "route-views8": {
+        "project": "routeviews",
+        "baseURL": "https://archive.routeviews.org/route-views8/bgpdata/",
+        "kafkaTopics": "^routeviews8\\.([^.]+)\\.bmp_raw$",
+        "dataTypes": {
+          "ribs": {
+            "dumpPeriod": 7200,
+            "dumpDuration": 120,
+            "oldestDumpTime": "1741719120",
+            "oldestDumpTimeISO8601": "2025-03-11T18:52:00Z",
+            "latestDumpTime": "1781006400",
+            "latestDumpTimeISO8601": "2026-06-09T12:00:00Z",
+            "latestDumpFile": "https://archive.routeviews.org/route-views8/bgpdata/2026.06/RIBS/rib.20260609.1200.bz2"
+          },
+          "updates": {
+            "dumpPeriod": 900,
+            "dumpDuration": 900,
+            "oldestDumpTime": "1741719120",
+            "oldestDumpTimeISO8601": "2025-03-11T18:52:00Z",
+            "latestDumpTime": "1781009100",
+            "latestDumpTimeISO8601": "2026-06-09T12:45:00Z",
+            "latestDumpFile": "https://archive.routeviews.org/route-views8/bgpdata/2026.06/UPDATES/updates.20260609.1245.bz2"
+          }
+        }
+      }
+    }
+  }
+}

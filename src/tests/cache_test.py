@@ -66,6 +66,142 @@ async def test_init_cache_db():
 
 
 @pytest.mark.asyncio
+async def test_init_cache_db_sets_schema_version():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        await init_cache_db(db_path)
+
+        with sqlite3.connect(db_path) as db:
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+
+        assert version == cache.CURRENT_CACHE_SCHEMA_VERSION
+
+
+@pytest.mark.asyncio
+async def test_cache_migration_invalidates_routeviews_rows(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+
+        monkeypatch.setattr(cache, "CURRENT_CACHE_SCHEMA_VERSION", 1)
+        await init_cache_db(db_path)
+
+        with sqlite3.connect(db_path) as db:
+            db.executemany(
+                """
+                INSERT INTO collector_cache
+                    (project, name, base_url, installed, removed, cached_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        "routeviews",
+                        "route-views8",
+                        "https://archive.routeviews.org/route-views8/bgpdata/",
+                        "2025-03-11T12:00:00+00:00",
+                        None,
+                        1,
+                    ),
+                    (
+                        "ris",
+                        "RRC00",
+                        "https://data.ris.ripe.net/rrc00/",
+                        "1999-10-01T00:00:00+00:00",
+                        None,
+                        1,
+                    ),
+                ],
+            )
+            db.executemany(
+                """
+                INSERT INTO index_cache (url, downloaded_at, month_end_date)
+                VALUES (?, ?, ?)
+                """,
+                [
+                    (
+                        "https://archive.routeviews.org/route-views8/bgpdata/2025.03/UPDATES/",
+                        1,
+                        "2025-03-31T23:59:59+00:00",
+                    ),
+                    (
+                        "https://data.ris.ripe.net/rrc00/2025.03/",
+                        1,
+                        "2025-03-31T23:59:59+00:00",
+                    ),
+                ],
+            )
+            db.executemany(
+                """
+                INSERT INTO file_cache (
+                    index_url, collector_name, collector_project, collector_base_url,
+                    collector_installed, collector_removed, filename, file_url, file_type
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        "https://archive.routeviews.org/route-views8/bgpdata/2025.03/UPDATES/",
+                        "route-views8",
+                        "routeviews",
+                        "https://archive.routeviews.org/route-views8/bgpdata/",
+                        "2025-03-11T12:00:00+00:00",
+                        None,
+                        "updates.20250311.1852.bz2",
+                        "https://archive.routeviews.org/route-views8/bgpdata/2025.03/UPDATES/updates.20250311.1852.bz2",
+                        "update",
+                    ),
+                    (
+                        "https://data.ris.ripe.net/rrc00/2025.03/",
+                        "RRC00",
+                        "ris",
+                        "https://data.ris.ripe.net/rrc00/",
+                        "1999-10-01T00:00:00+00:00",
+                        None,
+                        "updates.20250311.1850.gz",
+                        "https://data.ris.ripe.net/rrc00/2025.03/updates.20250311.1850.gz",
+                        "update",
+                    ),
+                ],
+            )
+            db.commit()
+
+        monkeypatch.setattr(cache, "CURRENT_CACHE_SCHEMA_VERSION", 2)
+        await init_cache_db(db_path)
+        await init_cache_db(db_path)
+
+        with sqlite3.connect(db_path) as db:
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            routeviews_collectors = db.execute(
+                "SELECT COUNT(*) FROM collector_cache WHERE project = 'routeviews'"
+            ).fetchone()[0]
+            ris_collectors = db.execute(
+                "SELECT COUNT(*) FROM collector_cache WHERE project = 'ris'"
+            ).fetchone()[0]
+            routeviews_indexes = db.execute(
+                """
+                SELECT COUNT(*) FROM index_cache
+                WHERE url LIKE 'https://archive.routeviews.org/%'
+                   OR url LIKE 'https://archive2.routeviews.org/%'
+                """
+            ).fetchone()[0]
+            ris_indexes = db.execute(
+                "SELECT COUNT(*) FROM index_cache WHERE url LIKE 'https://data.ris.ripe.net/%'"
+            ).fetchone()[0]
+            routeviews_files = db.execute(
+                "SELECT COUNT(*) FROM file_cache WHERE collector_project = 'routeviews'"
+            ).fetchone()[0]
+            ris_files = db.execute(
+                "SELECT COUNT(*) FROM file_cache WHERE collector_project = 'ris'"
+            ).fetchone()[0]
+
+        assert version == 2
+        assert routeviews_collectors == 0
+        assert ris_collectors == 1
+        assert routeviews_indexes == 0
+        assert ris_indexes == 1
+        assert routeviews_files == 0
+        assert ris_files == 1
+
+
+@pytest.mark.asyncio
 async def test_store_and_retrieve_index():
     """Test storing and retrieving file entries from the cache."""
     with tempfile.TemporaryDirectory() as tmpdir:

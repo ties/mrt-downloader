@@ -1,9 +1,13 @@
 import datetime
+import json
+import logging
 from typing import Any
 
 import aiohttp
 
 from mrt_downloader.models import CollectorInfo
+
+LOG = logging.getLogger(__name__)
 
 
 def parse_ripe_ris_collectors(obj: dict[str, dict[str, Any]]) -> list[CollectorInfo]:
@@ -51,20 +55,38 @@ async def get_ripe_ris_collectors(
         return parse_ripe_ris_collectors(data)
 
 
-def parse_routeviews_collectors(obj: dict[str, dict[Any, str]]) -> list[CollectorInfo]:
+def _parse_iso8601_datetime(value: str) -> datetime.datetime:
+    return datetime.datetime.fromisoformat(value)
+
+
+def parse_routeviews_collectors(obj: dict[str, Any]) -> list[CollectorInfo]:
     collectors: list[CollectorInfo] = []
-    for collector in obj["results"]:
-        base_url = f"https://archive.routeviews.org/{collector['name']}/bgpdata/"
+    for name, collector in obj["data"]["collectors"].items():
+        data_types = collector.get("dataTypes", {})
+        oldest_dump_times = [
+            _parse_iso8601_datetime(data_type["oldestDumpTimeISO8601"])
+            for data_type in data_types.values()
+            if data_type.get("oldestDumpTimeISO8601")
+        ]
+        latest_dump_times = [
+            _parse_iso8601_datetime(data_type["latestDumpTimeISO8601"])
+            for data_type in data_types.values()
+            if data_type.get("latestDumpTimeISO8601")
+        ]
+
+        if not oldest_dump_times:
+            LOG.warning(
+                "Skipping RouteViews collector %s without oldest dump time", name
+            )
+            continue
 
         collectors.append(
             CollectorInfo(
-                name=collector["name"],
+                name=name,
                 project="routeviews",
-                base_url=base_url,
-                installed=datetime.datetime.fromisoformat(collector["installed"]),
-                removed=datetime.datetime.fromisoformat(collector["removed"])
-                if collector["removed"]
-                else None,
+                base_url=collector["baseURL"],
+                installed=min(oldest_dump_times),
+                removed=max(latest_dump_times) if latest_dump_times else None,
             )
         )
 
@@ -78,8 +100,12 @@ async def get_routeviews_collectors(
     Get the list of RouteViews collectors.
     """
     async with session.get(
-        "https://api.routeviews.org/guest/collector/", raise_for_status=True
+        "https://api.routeviews.org/meta/collectors", raise_for_status=True
     ) as resp:
-        data = await resp.json()
+        data = await resp.json(content_type=None)
+        LOG.debug(
+            "RouteViews collector metadata API response:\n%s",
+            json.dumps(data, indent=2, sort_keys=True),
+        )
 
         return parse_routeviews_collectors(data)
