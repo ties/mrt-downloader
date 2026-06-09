@@ -1,3 +1,7 @@
+## v0.0.16
+
+  * 
+
 ## v0.0.15
 
   * Use `https://api.routeviews.org/meta/collectors` for routeviews collector
