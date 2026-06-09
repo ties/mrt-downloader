@@ -55,4 +55,4 @@ async def test_get_routeviews_collectors(session: aiohttp.ClientSession):
             routeviews8.base_url
             == "https://archive.routeviews.org/route-views8/bgpdata/"
         )
-        assert routeviews8.installed == datetime(2025, 3, 11, 12, tzinfo=UTC)
+        assert routeviews8.installed == datetime(2025, 3, 11, 18, 52, tzinfo=UTC)

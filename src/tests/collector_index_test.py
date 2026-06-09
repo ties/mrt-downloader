@@ -18,7 +18,7 @@ from mrt_downloader.models import CollectorIndexEntry, CollectorInfo
 
 @pytest.fixture
 def routeviews_collectors() -> list[CollectorInfo]:
-    with Path("src/tests/fixtures/api-routeviews-guest-collector.json").open(
+    with Path("src/tests/fixtures/api-routeviews-meta-collectors.json").open(
         "r", encoding="utf-8"
     ) as f:
         data = json.load(f)
@@ -32,6 +32,19 @@ def ris_collectors() -> list[CollectorInfo]:
     ) as f:
         data = json.load(f)
         return parse_ripe_ris_collectors(data)
+
+
+def test_parse_routeviews_collectors_uses_metadata_availability(
+    routeviews_collectors: list[CollectorInfo],
+) -> None:
+    bknix = [c for c in routeviews_collectors if c.name == "route-views.bknix"][0]
+
+    assert bknix.project == "routeviews"
+    assert bknix.base_url == "https://archive.routeviews.org/route-views.bknix/bgpdata/"
+    assert bknix.installed == datetime.datetime(
+        2019, 10, 28, 23, 15, tzinfo=datetime.UTC
+    )
+    assert bknix.removed == datetime.datetime(2026, 6, 9, 12, 45, tzinfo=datetime.UTC)
 
 
 BKNIX_COLLECTOR = CollectorInfo(
@@ -98,6 +111,23 @@ def test_index_files_for_collector_routeviews(
         index_files[0].url
         == "https://archive.routeviews.org/route-views.flix/bgpdata/2024.01/RIBS/"
     )
+
+
+def test_index_files_for_routeviews_includes_first_partial_month(
+    routeviews_collectors: list[CollectorInfo],
+) -> None:
+    routeviews8 = [c for c in routeviews_collectors if c.name == "route-views8"][0]
+
+    index_files = index_files_for_collector(
+        routeviews8,
+        start_time=datetime.datetime(2025, 3, 1, tzinfo=datetime.UTC),
+        end_time=datetime.datetime(2025, 3, 31, tzinfo=datetime.UTC),
+    )
+
+    assert [entry.url for entry in index_files] == [
+        "https://archive.routeviews.org/route-views8/bgpdata/2025.03/RIBS/",
+        "https://archive.routeviews.org/route-views8/bgpdata/2025.03/UPDATES/",
+    ]
 
 
 def test_index_files_for_ris(ris_collectors: list[CollectorInfo]) -> None:

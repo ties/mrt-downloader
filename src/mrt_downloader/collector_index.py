@@ -23,6 +23,14 @@ LOG = logging.getLogger(__name__)
 BASE_URL_TEMPLATE = "https://data.ris.ripe.net/rrc{rrc:02}/{year:04}.{month:02}/"
 
 
+def get_month_end_date(year: int, month: int) -> datetime.datetime:
+    if month == 12:
+        next_month = datetime.datetime(year + 1, 1, 1, tzinfo=datetime.UTC)
+    else:
+        next_month = datetime.datetime(year, month + 1, 1, tzinfo=datetime.UTC)
+    return next_month - datetime.timedelta(seconds=1)
+
+
 @deprecated(
     "This method will be removed on or after 2025-11-01. The method is no longer used, because files are now taken from the index."
 )
@@ -53,7 +61,8 @@ def index_files_for_collector(
 
     now = start_time
     while True:
-        if now >= collector.installed and (
+        month_end = get_month_end_date(now.year, now.month)
+        if month_end >= collector.installed and (
             not collector.removed or now <= collector.removed
         ):
             match collector.project:
