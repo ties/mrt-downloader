@@ -394,9 +394,10 @@ async def test_download_worker_retries_incomplete_payload_without_partial_target
         url=url,
         file_type="update",
     )
+    naming_strategy = ByCollectorStrategy()
     worker = DownloadWorker(
         tmp_path,
-        ByCollectorStrategy(),
+        naming_strategy,
         session,  # type: ignore[arg-type]
         asyncio.Queue(),
     )
@@ -404,7 +405,7 @@ async def test_download_worker_retries_incomplete_payload_without_partial_target
 
     await worker.download_file(entry)
 
-    target_file = tmp_path / "RRC00" / "updates.20250501.0000.gz"
+    target_file = naming_strategy.get_path(tmp_path, entry)
     assert session.get_urls == [url, url]
     assert target_file.read_bytes() == b"complete"
     assert not list(target_file.parent.glob("*.tmp"))
