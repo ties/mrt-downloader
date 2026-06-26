@@ -6,6 +6,8 @@ from mrt_downloader.models import CollectorFileEntry
 
 MirrorUse = Literal["file", "index"]
 Project = Literal["ris", "routeviews"]
+ROUTEVIEWS_OSDF_HOST = "osdf-director.osg-htc.org"
+ROUTEVIEWS_OSDF_PATH_PREFIX = "/routeviews"
 
 
 @dataclass(frozen=True)
@@ -53,7 +55,44 @@ ARCHIVE_MIRROR_POLICIES: dict[Project, ArchiveMirrorPolicy] = {
 }
 
 
+def _routeviews_file_url_alternatives(url: str) -> tuple[str, ...]:
+    parsed = urllib.parse.urlsplit(url)
+    policy = ARCHIVE_MIRROR_POLICIES["routeviews"]
+
+    if parsed.hostname == ROUTEVIEWS_OSDF_HOST:
+        archive_path = parsed.path.removeprefix(ROUTEVIEWS_OSDF_PATH_PREFIX)
+        if archive_path == parsed.path:
+            return (url,)
+    elif parsed.hostname in policy.hosts:
+        archive_path = parsed.path
+    else:
+        return (url,)
+
+    alternatives = [
+        urllib.parse.urlunsplit(
+            (
+                "https",
+                ROUTEVIEWS_OSDF_HOST,
+                f"{ROUTEVIEWS_OSDF_PATH_PREFIX}{archive_path}",
+                parsed.query,
+                parsed.fragment,
+            )
+        ),
+        *(
+            urllib.parse.urlunsplit(
+                ("https", host, archive_path, parsed.query, parsed.fragment)
+            )
+            for host in policy.hosts
+        ),
+    ]
+
+    return tuple(dict.fromkeys(alternatives))
+
+
 def file_url_alternatives(entry: CollectorFileEntry) -> tuple[str, ...]:
+    if entry.collector.project == "routeviews":
+        return _routeviews_file_url_alternatives(entry.url)
+
     policy = ARCHIVE_MIRROR_POLICIES.get(entry.collector.project)
     if policy is None:
         return (entry.url,)

@@ -142,16 +142,20 @@ class RetryHelper:
         operation_name: str,
         urls: Sequence[str],
         retry_client_statuses: frozenset[int] = frozenset(),
+        randomize_start: bool = True,
     ) -> T:
         """Execute an async URL operation with retry logic.
 
-        If more than one URL is supplied, the first attempt starts at a random
-        URL and retries rotate through the alternatives in order.
+        If more than one URL is supplied and randomize_start is enabled, the
+        first attempt starts at a random URL. Retries rotate through the
+        alternatives in order.
         """
         if not urls:
             raise ValueError("At least one URL is required")
 
-        start_index = self.random_start(len(urls)) if len(urls) > 1 else 0
+        start_index = (
+            self.random_start(len(urls)) if randomize_start and len(urls) > 1 else 0
+        )
         last_exception = None
         retryable_client_statuses = (
             DEFAULT_RETRY_CLIENT_STATUSES | retry_client_statuses
@@ -350,7 +354,7 @@ class DownloadWorker:
             urls = file_url_alternatives(entry)
 
             async def check_modified(url: str):
-                async with self.session.head(url) as response:
+                async with self.session.head(url, allow_redirects=True) as response:
                     if response.status != 200:
                         raise aiohttp.ClientResponseError(
                             request_info=response.request_info,
@@ -368,6 +372,7 @@ class DownloadWorker:
                 f"HEAD {entry.url}",
                 urls,
                 retry_client_statuses=retry_client_statuses_for_urls(urls),
+                randomize_start=False,
             )
 
             if content_length and last_modified:
@@ -440,6 +445,7 @@ class DownloadWorker:
             f"Download {entry.url}",
             urls,
             retry_client_statuses=retry_client_statuses_for_urls(urls),
+            randomize_start=False,
         )
 
     async def run(self) -> int:

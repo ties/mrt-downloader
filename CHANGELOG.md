@@ -1,6 +1,10 @@
 ## v0.0.16
 
-  * 
+  * Use the OSDF RouteViews mirror as the primary source for RouteViews MRT
+    file downloads, with archive.routeviews.org and archive2.routeviews.org as
+    fallbacks.
+  * Verify downloads retry cleanly when aiohttp reports an incomplete response
+    payload before the advertised Content-Length is reached.
 
 ## v0.0.15
 
