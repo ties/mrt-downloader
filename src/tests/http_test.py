@@ -12,6 +12,10 @@ from mrt_downloader.files import ByCollectorStrategy
 from mrt_downloader.http import DownloadWorker, RetryHelper
 from mrt_downloader.mirrors import (
     ARCHIVE_MIRROR_POLICIES,
+    ArchiveRandomMirrorStrategy,
+    MirrorAttemptPlan,
+    OsdfPreferredMirrorStrategy,
+    ProjectMirrorStrategy,
     file_url_alternatives,
 )
 from mrt_downloader.models import CollectorFileEntry, CollectorIndexEntry, CollectorInfo
@@ -94,6 +98,14 @@ class FakeSession:
         return self.responses[url].pop(0)
 
 
+class StaticMirrorStrategy:
+    def __init__(self, url: str):
+        self.url = url
+
+    def file_plan(self, _entry: CollectorFileEntry) -> MirrorAttemptPlan:
+        return MirrorAttemptPlan(urls=(self.url,))
+
+
 def _client_error(
     status: int, url: str, headers: dict[str, str] | None = None
 ) -> aiohttp.ClientResponseError:
@@ -106,7 +118,7 @@ def _client_error(
     )
 
 
-def test_routeviews_file_url_alternatives_use_osdf_then_archive_mirrors() -> None:
+def test_routeviews_file_url_alternatives_include_archive_mirrors() -> None:
     entry = CollectorFileEntry(
         collector=ROUTEVIEWS_COLLECTOR,
         filename="updates.20250501.0000.bz2",
@@ -115,7 +127,6 @@ def test_routeviews_file_url_alternatives_use_osdf_then_archive_mirrors() -> Non
     )
 
     assert file_url_alternatives(entry) == (
-        "https://osdf-director.osg-htc.org/routeviews/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2?x=1#frag",
         "https://archive.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2?x=1#frag",
         "https://archive2.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2?x=1#frag",
     )
@@ -130,25 +141,89 @@ def test_routeviews_secondary_file_url_alternatives_return_canonical_order() -> 
     )
 
     assert file_url_alternatives(entry) == (
+        "https://archive.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2",
+        "https://archive2.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2",
+    )
+
+
+def test_archive_random_strategy_rotates_routeviews_archive_mirrors() -> None:
+    entry = CollectorFileEntry(
+        collector=ROUTEVIEWS_COLLECTOR,
+        filename="updates.20250501.0000.bz2",
+        url="https://archive.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2?x=1#frag",
+        file_type="update",
+    )
+
+    plan = ArchiveRandomMirrorStrategy(random_start=lambda _n: 1).file_plan(entry)
+
+    assert plan.urls == (
+        "https://archive2.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2?x=1#frag",
+        "https://archive.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2?x=1#frag",
+    )
+    assert plan.retry_client_statuses == frozenset((404,))
+    assert plan.head_allow_redirects is False
+
+
+def test_osdf_preferred_strategy_uses_osdf_then_random_archive_mirrors() -> None:
+    entry = CollectorFileEntry(
+        collector=ROUTEVIEWS_COLLECTOR,
+        filename="updates.20250501.0000.bz2",
+        url="https://archive.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2?x=1#frag",
+        file_type="update",
+    )
+
+    plan = OsdfPreferredMirrorStrategy(random_start=lambda _n: 1).file_plan(entry)
+
+    assert plan.urls == (
+        "https://osdf-director.osg-htc.org/routeviews/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2?x=1#frag",
+        "https://archive2.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2?x=1#frag",
+        "https://archive.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2?x=1#frag",
+    )
+    assert plan.retry_client_statuses == frozenset((404,))
+    assert plan.head_allow_redirects is True
+
+
+def test_osdf_preferred_strategy_handles_osdf_input_url() -> None:
+    entry = CollectorFileEntry(
+        collector=ROUTEVIEWS_COLLECTOR,
+        filename="updates.20250501.0000.bz2",
+        url="https://osdf-director.osg-htc.org/routeviews/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2",
+        file_type="update",
+    )
+
+    plan = OsdfPreferredMirrorStrategy(random_start=lambda _n: 0).file_plan(entry)
+
+    assert plan.urls == (
         "https://osdf-director.osg-htc.org/routeviews/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2",
         "https://archive.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2",
         "https://archive2.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2",
     )
 
 
-def test_routeviews_osdf_file_url_alternatives_return_canonical_order() -> None:
-    entry = CollectorFileEntry(
-        collector=ROUTEVIEWS_COLLECTOR,
-        filename="updates.20250501.0000.bz2",
-        url="https://osdf-director.osg-htc.org/routeviews/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2?x=1#frag",
-        file_type="update",
+def test_project_mirror_strategy_dispatches_by_project() -> None:
+    strategy = ProjectMirrorStrategy(
+        {
+            "ris": StaticMirrorStrategy("https://ris.example/file"),
+            "routeviews": StaticMirrorStrategy("https://routeviews.example/file"),
+        }
     )
 
-    assert file_url_alternatives(entry) == (
-        "https://osdf-director.osg-htc.org/routeviews/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2?x=1#frag",
-        "https://archive.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2?x=1#frag",
-        "https://archive2.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2?x=1#frag",
-    )
+    assert strategy.file_plan(
+        CollectorFileEntry(
+            collector=RIS_COLLECTOR,
+            filename="updates.20250501.0000.gz",
+            url="https://data.ris.ripe.net/rrc00/2025.05/updates.20250501.0000.gz",
+            file_type="update",
+        )
+    ).urls == ("https://ris.example/file",)
+    assert strategy.file_plan(
+        CollectorFileEntry(
+            collector=ROUTEVIEWS_COLLECTOR,
+            filename="updates.20250501.0000.bz2",
+            url="https://archive.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2",
+            file_type="update",
+        )
+    ).urls == ("https://routeviews.example/file",)
 
 
 def test_ris_file_url_alternatives_stay_primary_only() -> None:
@@ -179,8 +254,8 @@ def test_routeviews_index_url_alternatives_stay_primary_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_retry_helper_starts_at_random_url() -> None:
-    helper = RetryHelper(max_retries=0, initial_delay=0, random_start=lambda _n: 1)
+async def test_retry_helper_uses_supplied_url_order() -> None:
+    helper = RetryHelper(max_retries=0, initial_delay=0)
     urls: list[str] = []
 
     async def operation(url: str) -> str:
@@ -193,13 +268,13 @@ async def test_retry_helper_starts_at_random_url() -> None:
         ("https://archive.routeviews.org/file", "https://archive2.routeviews.org/file"),
     )
 
-    assert result == "https://archive2.routeviews.org/file"
-    assert urls == ["https://archive2.routeviews.org/file"]
+    assert result == "https://archive.routeviews.org/file"
+    assert urls == ["https://archive.routeviews.org/file"]
 
 
 @pytest.mark.asyncio
 async def test_retry_helper_rotates_routeviews_404() -> None:
-    helper = RetryHelper(max_retries=1, initial_delay=0, random_start=lambda _n: 0)
+    helper = RetryHelper(max_retries=1, initial_delay=0)
     urls: list[str] = []
 
     async def operation(url: str) -> str:
@@ -322,7 +397,51 @@ async def test_retry_helper_still_does_not_retry_other_client_errors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_download_worker_tries_routeviews_osdf_before_archive_mirrors(
+async def test_download_worker_retries_routeviews_archive_mirrors(
+    tmp_path: Path,
+) -> None:
+    archive_url = (
+        "https://archive.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/"
+        "updates.20250501.0000.bz2"
+    )
+    archive2_url = (
+        "https://archive2.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/"
+        "updates.20250501.0000.bz2"
+    )
+    session = FakeSession(
+        {
+            archive_url: [FakeResponse(archive_url, 404)],
+            archive2_url: [FakeResponse(archive2_url, 200, body=b"mrt")],
+        }
+    )
+    entry = CollectorFileEntry(
+        collector=ROUTEVIEWS_COLLECTOR,
+        filename="updates.20250501.0000.bz2",
+        url=archive_url,
+        file_type="update",
+    )
+    worker = DownloadWorker(
+        tmp_path,
+        ByCollectorStrategy(),
+        session,  # type: ignore[arg-type]
+        asyncio.Queue(),
+        mirror_strategy=ArchiveRandomMirrorStrategy(random_start=lambda _n: 0),
+    )
+    worker.retry_helper = RetryHelper(
+        max_retries=1,
+        initial_delay=0,
+    )
+
+    await worker.download_file(entry)
+
+    assert session.get_urls == [archive_url, archive2_url]
+    assert (
+        tmp_path / "route-views.bknix" / "updates.20250501.0000.bz2"
+    ).read_bytes() == b"mrt"
+
+
+@pytest.mark.asyncio
+async def test_download_worker_osdf_preferred_tries_osdf_before_archive_fallback(
     tmp_path: Path,
 ) -> None:
     osdf_url = (
@@ -340,7 +459,6 @@ async def test_download_worker_tries_routeviews_osdf_before_archive_mirrors(
     session = FakeSession(
         {
             osdf_url: [FakeResponse(osdf_url, 404)],
-            archive_url: [FakeResponse(archive_url, 404)],
             archive2_url: [FakeResponse(archive2_url, 200, body=b"mrt")],
         }
     )
@@ -355,16 +473,13 @@ async def test_download_worker_tries_routeviews_osdf_before_archive_mirrors(
         ByCollectorStrategy(),
         session,  # type: ignore[arg-type]
         asyncio.Queue(),
+        mirror_strategy=OsdfPreferredMirrorStrategy(random_start=lambda _n: 1),
     )
-    worker.retry_helper = RetryHelper(
-        max_retries=2,
-        initial_delay=0,
-        random_start=lambda _n: 2,
-    )
+    worker.retry_helper = RetryHelper(max_retries=1, initial_delay=0)
 
     await worker.download_file(entry)
 
-    assert session.get_urls == [osdf_url, archive_url, archive2_url]
+    assert session.get_urls == [osdf_url, archive2_url]
     assert (
         tmp_path / "route-views.bknix" / "updates.20250501.0000.bz2"
     ).read_bytes() == b"mrt"
@@ -415,21 +530,21 @@ async def test_download_worker_retries_incomplete_payload_without_partial_target
 async def test_download_worker_retries_routeviews_head_on_secondary(
     tmp_path: Path,
 ) -> None:
-    osdf_url = (
-        "https://osdf-director.osg-htc.org/routeviews/route-views.bknix/bgpdata/2025.05/UPDATES/"
-        "updates.20250501.0000.bz2"
-    )
     archive_url = (
         "https://archive.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/"
+        "updates.20250501.0000.bz2"
+    )
+    archive2_url = (
+        "https://archive2.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/"
         "updates.20250501.0000.bz2"
     )
     last_modified = datetime.datetime(2025, 5, 1, tzinfo=datetime.UTC)
     session = FakeSession(
         {
-            osdf_url: [FakeResponse(osdf_url, 404)],
-            archive_url: [
+            archive_url: [FakeResponse(archive_url, 404)],
+            archive2_url: [
                 FakeResponse(
-                    archive_url,
+                    archive2_url,
                     200,
                     headers={
                         "Content-Length": "3",
@@ -457,20 +572,70 @@ async def test_download_worker_retries_routeviews_head_on_secondary(
         naming_strategy,
         session,  # type: ignore[arg-type]
         asyncio.Queue(),
+        mirror_strategy=ArchiveRandomMirrorStrategy(random_start=lambda _n: 0),
     )
-    worker.retry_helper = RetryHelper(
-        max_retries=1,
-        initial_delay=0,
-        random_start=lambda _n: 2,
-    )
+    worker.retry_helper = RetryHelper(max_retries=1, initial_delay=0)
 
     await worker.download_file(entry)
 
-    assert session.head_urls == [osdf_url, archive_url]
-    assert session.head_kwargs == [
-        {"allow_redirects": True},
-        {"allow_redirects": True},
-    ]
+    assert session.head_urls == [archive_url, archive2_url]
+    assert session.head_kwargs == [{}, {}]
+    assert session.get_urls == []
+
+
+@pytest.mark.asyncio
+async def test_download_worker_osdf_preferred_head_follows_redirects(
+    tmp_path: Path,
+) -> None:
+    osdf_url = (
+        "https://osdf-director.osg-htc.org/routeviews/route-views.bknix/bgpdata/2025.05/UPDATES/"
+        "updates.20250501.0000.bz2"
+    )
+    archive_url = (
+        "https://archive.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/"
+        "updates.20250501.0000.bz2"
+    )
+    last_modified = datetime.datetime(2025, 5, 1, tzinfo=datetime.UTC)
+    session = FakeSession(
+        {
+            osdf_url: [
+                FakeResponse(
+                    osdf_url,
+                    200,
+                    headers={
+                        "Content-Length": "3",
+                        "Last-Modified": email.utils.format_datetime(
+                            last_modified, usegmt=True
+                        ),
+                    },
+                )
+            ],
+        }
+    )
+    entry = CollectorFileEntry(
+        collector=ROUTEVIEWS_COLLECTOR,
+        filename="updates.20250501.0000.bz2",
+        url=archive_url,
+        file_type="update",
+    )
+    naming_strategy = ByCollectorStrategy()
+    target_file = naming_strategy.get_path(tmp_path, entry)
+    target_file.parent.mkdir(parents=True)
+    target_file.write_bytes(b"mrt")
+    os.utime(target_file, (last_modified.timestamp(), last_modified.timestamp()))
+    worker = DownloadWorker(
+        tmp_path,
+        naming_strategy,
+        session,  # type: ignore[arg-type]
+        asyncio.Queue(),
+        mirror_strategy=OsdfPreferredMirrorStrategy(random_start=lambda _n: 0),
+    )
+    worker.retry_helper = RetryHelper(max_retries=0, initial_delay=0)
+
+    await worker.download_file(entry)
+
+    assert session.head_urls == [osdf_url]
+    assert session.head_kwargs == [{"allow_redirects": True}]
     assert session.get_urls == []
 
 

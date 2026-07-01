@@ -5,6 +5,9 @@
 Download MRT update or bview files, from RIPE RIS, routeviews, or both.
 The CLI uses a local cache for the index pages from the route collector
 projects.
+RouteViews downloads use the regular archive mirrors by default. To prefer
+OSDF for RouteViews file downloads, add
+`--routeviews-mirror-strategy=osdf-preferred`.
 
 ```
 # install the tool using pipx
@@ -29,7 +32,7 @@ There are two ways to use this project:
 
   * Install the command-line tool using pipx
   * As a checked out python project, using uv
-  * Or as a library (there is no documentation for this at the moment).
+  * Or as a library
 
 ### pipx
 
@@ -47,6 +50,67 @@ uv install
 # download a day's MRT files into the mrt directory.
 uv run python -m mrt_downloader.cli mrt 2025-01-16T00:50 2025-01-17T00:00
 ```
+
+### Library use
+
+The same RouteViews mirror strategy can be selected when calling the downloader
+from Python. Omit `routeviews_mirror_strategy` or use `"archive-random"` for the
+default regular archive mirrors; use `"osdf-preferred"` to try OSDF first and
+fall back to the regular RouteViews archives.
+
+```python
+import asyncio
+import datetime
+from pathlib import Path
+
+from mrt_downloader.download import download_files
+from mrt_downloader.files import PrefixCollectorStrategy
+
+
+async def main() -> None:
+    await download_files(
+        target_dir=Path("mrt"),
+        start_time=datetime.datetime(2025, 1, 16, 0, 50, tzinfo=datetime.UTC),
+        end_time=datetime.datetime(2025, 1, 17, 0, 0, tzinfo=datetime.UTC),
+        num_workers=4,
+        naming_strategy=PrefixCollectorStrategy(),
+        project=frozenset({"routeviews"}),
+        collectors=["route-views.bknix"],
+        routeviews_mirror_strategy="osdf-preferred",
+    )
+
+
+asyncio.run(main())
+```
+
+For callers that want to pass strategy objects directly, provide a
+`mirror_strategies` mapping. Unspecified projects fall back to regular archive
+behavior.
+
+```python
+from mrt_downloader.mirrors import (
+    ArchiveRandomMirrorStrategy,
+    OsdfPreferredMirrorStrategy,
+)
+
+
+await download_files(
+    target_dir=Path("mrt"),
+    start_time=datetime.datetime(2025, 1, 16, 0, 50, tzinfo=datetime.UTC),
+    end_time=datetime.datetime(2025, 1, 17, 0, 0, tzinfo=datetime.UTC),
+    num_workers=4,
+    naming_strategy=PrefixCollectorStrategy(),
+    project=frozenset({"ris", "routeviews"}),
+    mirror_strategies={
+        "ris": ArchiveRandomMirrorStrategy(),
+        "routeviews": OsdfPreferredMirrorStrategy(),
+    },
+)
+```
+
+For lower-level integrations, `DownloadWorker` accepts a `mirror_strategy`
+object. Custom strategies should implement `file_plan(entry)` and return a
+`MirrorAttemptPlan`.
 
 ## Full example: Running on Rocky Linux 9
 

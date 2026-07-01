@@ -2,7 +2,7 @@ import asyncio
 import datetime
 import itertools
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Literal
 
@@ -20,6 +20,14 @@ from mrt_downloader.collector_index import (
 )
 from mrt_downloader.collectors import get_ripe_ris_collectors, get_routeviews_collectors
 from mrt_downloader.http import DownloadWorker, FileNamingStrategy, IndexWorker
+from mrt_downloader.mirrors import (
+    DEFAULT_ROUTEVIEWS_MIRROR_STRATEGY,
+    FileMirrorStrategy,
+    Project,
+    ProjectMirrorStrategy,
+    RouteviewsMirrorStrategyName,
+    mirror_strategy_from_name,
+)
 from mrt_downloader.models import (
     CollectorFileEntry,
     CollectorIndexEntry,
@@ -67,6 +75,10 @@ async def download_files(
     collectors: list[str] | None = None,
     project: frozenset[Literal["ris", "routeviews"]] = frozenset(["ris"]),
     force_cache_refresh: bool = False,
+    routeviews_mirror_strategy: RouteviewsMirrorStrategyName = (
+        DEFAULT_ROUTEVIEWS_MIRROR_STRATEGY
+    ),
+    mirror_strategies: Mapping[Project, FileMirrorStrategy] | None = None,
 ):
     """Gather the list of update files per timestamp per rrc and download them."""
     assert start_time.tzinfo == datetime.UTC, "Start time must be in UTC"
@@ -164,7 +176,22 @@ async def download_files(
         )
 
         queue: asyncio.Queue[CollectorFileEntry] = asyncio.Queue()
-        download_worker = DownloadWorker(target_dir, naming_strategy, session, queue)
+        default_routeviews_strategy = mirror_strategy_from_name(
+            routeviews_mirror_strategy
+        )
+        if mirror_strategies is None:
+            mirror_strategy = default_routeviews_strategy
+        else:
+            strategies = dict(mirror_strategies)
+            strategies.setdefault("routeviews", default_routeviews_strategy)
+            mirror_strategy = ProjectMirrorStrategy(strategies)
+        download_worker = DownloadWorker(
+            target_dir,
+            naming_strategy,
+            session,
+            queue,
+            mirror_strategy=mirror_strategy,
+        )
 
         # Add the relevant files to queue
         selected_files = select_files_for_download(

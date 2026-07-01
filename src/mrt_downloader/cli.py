@@ -21,6 +21,10 @@ from mrt_downloader.files import (
     PrefixCollectorByHourStrategy,
     PrefixCollectorStrategy,
 )
+from mrt_downloader.mirrors import (
+    DEFAULT_ROUTEVIEWS_MIRROR_STRATEGY,
+    RouteviewsMirrorStrategyName,
+)
 
 LOG = logging.getLogger(__name__)  #
 logging.basicConfig(level=logging.INFO)
@@ -101,6 +105,13 @@ CLICK_DATETIME_TYPE = click.DateTime(
     default=False,
     help="Force refresh all caches (collectors and indexes), ignoring cached data",
 )
+@click.option(
+    "--routeviews-mirror-strategy",
+    type=click.Choice(["archive-random", "osdf-preferred"]),
+    default=DEFAULT_ROUTEVIEWS_MIRROR_STRATEGY,
+    show_default=True,
+    help="RouteViews file mirror strategy.",
+)
 def cli(
     target_dir: Path,
     create_target: bool,
@@ -117,6 +128,9 @@ def cli(
     rib_only: bool | None = None,
     bview_only: bool | None = None,
     force_cache_refresh: bool = False,
+    routeviews_mirror_strategy: RouteviewsMirrorStrategyName = (
+        DEFAULT_ROUTEVIEWS_MIRROR_STRATEGY
+    ),
 ):
     """
     Download a set of BGP updates from RIS.
@@ -243,6 +257,7 @@ def cli(
             naming_strategy=naming_strategy,
             project=frozenset(project),
             force_cache_refresh=force_cache_refresh,
+            routeviews_mirror_strategy=routeviews_mirror_strategy,
         )
     )
 

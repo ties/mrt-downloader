@@ -23,7 +23,7 @@ from mrt_downloader.cache import (
 from mrt_downloader.collector_index import (
     process_index_entry,
 )
-from mrt_downloader.mirrors import file_url_alternatives
+from mrt_downloader.mirrors import ArchiveRandomMirrorStrategy, FileMirrorStrategy
 from mrt_downloader.models import CollectorFileEntry, CollectorIndexEntry, Download
 
 LOG = logging.getLogger(__name__)
@@ -35,7 +35,6 @@ except PackageNotFoundError:
 
 USER_AGENT = f"mrt-downloader/{__version__} https://github.com/ties/mrt-downloader"
 DEFAULT_RETRY_CLIENT_STATUSES = frozenset((429,))
-MIRRORED_FILE_RETRY_CLIENT_STATUSES = frozenset((404,))
 
 T = TypeVar("T")
 
@@ -59,12 +58,6 @@ def _parse_retry_after(value: str | None) -> float | None:
     return max(0.0, delay)
 
 
-def retry_client_statuses_for_urls(urls: Sequence[str]) -> frozenset[int]:
-    if len(urls) > 1:
-        return MIRRORED_FILE_RETRY_CLIENT_STATUSES
-    return frozenset()
-
-
 class RetryHelper:
     """Helper class for retrying HTTP operations with exponential backoff.
 
@@ -83,7 +76,6 @@ class RetryHelper:
         self,
         max_retries: int = 4,
         initial_delay: float = 2.0,
-        random_start: Callable[[int], int] | None = None,
         random_jitter: Callable[[float], float] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
     ):
@@ -92,13 +84,11 @@ class RetryHelper:
         Args:
             max_retries: Maximum number of retry attempts (default: 4)
             initial_delay: Initial delay in seconds before first retry (default: 2.0)
-            random_start: Optional random starting index provider for mirror rotation
             random_jitter: Optional jitter provider for retry delay tests
             sleep: Optional async sleep function for retry delay tests
         """
         self.max_retries = max_retries
         self.initial_delay = initial_delay
-        self.random_start = random_start or random.randrange
         self.random_jitter = random_jitter or (lambda delay: random.uniform(0, delay))
         self.sleep = sleep or asyncio.sleep
 
@@ -142,27 +132,22 @@ class RetryHelper:
         operation_name: str,
         urls: Sequence[str],
         retry_client_statuses: frozenset[int] = frozenset(),
-        randomize_start: bool = True,
     ) -> T:
         """Execute an async URL operation with retry logic.
 
-        If more than one URL is supplied and randomize_start is enabled, the
-        first attempt starts at a random URL. Retries rotate through the
-        alternatives in order.
+        If more than one URL is supplied, retries rotate through the alternatives
+        in the supplied order.
         """
         if not urls:
             raise ValueError("At least one URL is required")
 
-        start_index = (
-            self.random_start(len(urls)) if randomize_start and len(urls) > 1 else 0
-        )
         last_exception = None
         retryable_client_statuses = (
             DEFAULT_RETRY_CLIENT_STATUSES | retry_client_statuses
         )
 
         for attempt in range(self.max_retries + 1):
-            attempt_url = urls[(start_index + attempt) % len(urls)]
+            attempt_url = urls[attempt % len(urls)]
             try:
                 return await operation(attempt_url)
             except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError) as e:
@@ -319,6 +304,7 @@ class DownloadWorker:
     naming_strategy: FileNamingStrategy
     check_modified: bool
     retry_helper: RetryHelper
+    mirror_strategy: FileMirrorStrategy
 
     def __init__(
         self,
@@ -327,6 +313,7 @@ class DownloadWorker:
         session: aiohttp.ClientSession,
         queue: asyncio.Queue[CollectorFileEntry],
         check_modified: bool = True,
+        mirror_strategy: FileMirrorStrategy | None = None,
     ):
         self.base_dir = base_dir
         self.session = session
@@ -334,6 +321,7 @@ class DownloadWorker:
         self.naming_strategy = naming_strategy
         self.check_modified = check_modified
         self.retry_helper = RetryHelper()
+        self.mirror_strategy = mirror_strategy or ArchiveRandomMirrorStrategy()
 
     async def download_file(self, entry: CollectorFileEntry) -> None:
         target_file = self.naming_strategy.get_path(self.base_dir, entry)
@@ -351,10 +339,11 @@ class DownloadWorker:
                 return
 
             # check if file is modified with retry logic
-            urls = file_url_alternatives(entry)
+            plan = self.mirror_strategy.file_plan(entry)
+            head_kwargs = {"allow_redirects": True} if plan.head_allow_redirects else {}
 
             async def check_modified(url: str):
-                async with self.session.head(url, allow_redirects=True) as response:
+                async with self.session.head(url, **head_kwargs) as response:
                     if response.status != 200:
                         raise aiohttp.ClientResponseError(
                             request_info=response.request_info,
@@ -370,9 +359,8 @@ class DownloadWorker:
             content_length, last_modified = await self.retry_helper.execute_with_urls(
                 check_modified,
                 f"HEAD {entry.url}",
-                urls,
-                retry_client_statuses=retry_client_statuses_for_urls(urls),
-                randomize_start=False,
+                plan.urls,
+                retry_client_statuses=plan.retry_client_statuses,
             )
 
             if content_length and last_modified:
@@ -391,7 +379,7 @@ class DownloadWorker:
                     return
 
         # Download file with retry logic
-        urls = file_url_alternatives(entry)
+        plan = self.mirror_strategy.file_plan(entry)
 
         async def download(url: str):
             async with self.session.get(url) as response:
@@ -443,9 +431,8 @@ class DownloadWorker:
         await self.retry_helper.execute_with_urls(
             download,
             f"Download {entry.url}",
-            urls,
-            retry_client_statuses=retry_client_statuses_for_urls(urls),
-            randomize_start=False,
+            plan.urls,
+            retry_client_statuses=plan.retry_client_statuses,
         )
 
     async def run(self) -> int:
