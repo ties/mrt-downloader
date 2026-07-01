@@ -1,5 +1,9 @@
 ## v0.17.0
 
+  * Mirror selection is a selectable strategy now
+  * Make RouteViews OSDF downloads opt-in with
+    `--routeviews-mirror-strategy=osdf-preferred`; the default now rotates
+    randomly between the regular RouteViews archive mirrors.
 
 ## v0.0.16
 
