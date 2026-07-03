@@ -9,7 +9,11 @@ import aiohttp
 import pytest
 
 from mrt_downloader.files import ByCollectorStrategy
-from mrt_downloader.http import DownloadWorker, RetryHelper
+from mrt_downloader.http import (
+    DownloadWorker,
+    RetryHelper,
+    _build_grouped_retry_sequence,
+)
 from mrt_downloader.mirrors import (
     ARCHIVE_MIRROR_POLICIES,
     ArchiveRandomMirrorStrategy,
@@ -17,6 +21,7 @@ from mrt_downloader.mirrors import (
     OsdfPreferredMirrorStrategy,
     ProjectMirrorStrategy,
     file_url_alternatives,
+    parse_duplicate_link_urls,
 )
 from mrt_downloader.models import CollectorFileEntry, CollectorIndexEntry, CollectorInfo
 
@@ -85,11 +90,13 @@ class FakeSession:
     def __init__(self, responses: dict[str, list[FakeResponse]]):
         self.responses = responses
         self.get_urls: list[str] = []
+        self.get_kwargs: list[dict[str, bool]] = []
         self.head_urls: list[str] = []
         self.head_kwargs: list[dict[str, bool]] = []
 
-    def get(self, url: str) -> FakeResponse:
+    def get(self, url: str, **kwargs: bool) -> FakeResponse:
         self.get_urls.append(url)
+        self.get_kwargs.append(kwargs)
         return self.responses[url].pop(0)
 
     def head(self, url: str, **kwargs: bool) -> FakeResponse:
@@ -181,6 +188,10 @@ def test_osdf_preferred_strategy_uses_osdf_then_random_archive_mirrors() -> None
     )
     assert plan.retry_client_statuses == frozenset((404,))
     assert plan.head_allow_redirects is True
+    assert (
+        plan.osdf_director_url
+        == "https://osdf-director.osg-htc.org/routeviews/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2?x=1#frag"
+    )
 
 
 def test_osdf_preferred_strategy_handles_osdf_input_url() -> None:
@@ -197,6 +208,64 @@ def test_osdf_preferred_strategy_handles_osdf_input_url() -> None:
         "https://osdf-director.osg-htc.org/routeviews/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2",
         "https://archive.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2",
         "https://archive2.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/updates.20250501.0000.bz2",
+    )
+
+
+def test_parse_duplicate_link_urls_orders_filters_and_dedupes() -> None:
+    headers = [
+        (
+            '<https://cache3.example/file>; rel="duplicate"; pri=3; depth=4, '
+            '<https://cache1.example/file>; rel="duplicate"; pri=1; depth=4, '
+            '<https://ignored.example/file>; rel="describedby"; pri=0, '
+            '<https://cache2.example/file>; rel="duplicate alternate"; pri=2, '
+            '<https://cache1.example/file>; rel="duplicate"; pri=4, '
+            '<ftp://bad.example/file>; rel="duplicate"; pri=0'
+        ),
+        '<https://cache4.example/file>; rel="duplicate"',
+    ]
+
+    assert parse_duplicate_link_urls(headers) == (
+        "https://cache1.example/file",
+        "https://cache2.example/file",
+        "https://cache3.example/file",
+        "https://cache4.example/file",
+    )
+
+
+def test_grouped_retry_sequence_reserves_fallback_attempts() -> None:
+    assert _build_grouped_retry_sequence(
+        (
+            (
+                "https://cache1.example/file",
+                "https://cache2.example/file",
+                "https://cache3.example/file",
+                "https://cache4.example/file",
+                "https://cache5.example/file",
+                "https://cache6.example/file",
+            ),
+            (
+                "https://archive2.routeviews.org/file",
+                "https://archive.routeviews.org/file",
+            ),
+        ),
+        attempt_budget=5,
+    ) == (
+        "https://cache1.example/file",
+        "https://cache2.example/file",
+        "https://cache3.example/file",
+        "https://cache4.example/file",
+        "https://archive2.routeviews.org/file",
+    )
+
+    assert _build_grouped_retry_sequence(
+        (
+            ("https://cache1.example/file", "https://cache2.example/file"),
+            ("https://archive2.routeviews.org/file",),
+        ),
+        attempt_budget=2,
+    ) == (
+        "https://cache1.example/file",
+        "https://archive2.routeviews.org/file",
     )
 
 
@@ -295,6 +364,36 @@ async def test_retry_helper_rotates_routeviews_404() -> None:
         "https://archive.routeviews.org/file",
         "https://archive2.routeviews.org/file",
     ]
+
+
+@pytest.mark.asyncio
+async def test_retry_helper_can_walk_urls_without_wrapping() -> None:
+    sleeps: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    helper = RetryHelper(
+        max_retries=4,
+        initial_delay=0,
+        sleep=sleep,
+    )
+    urls: list[str] = []
+
+    async def operation(url: str) -> str:
+        urls.append(url)
+        raise _client_error(500, url)
+
+    with pytest.raises(aiohttp.ClientResponseError):
+        await helper.execute_with_urls(
+            operation,
+            "Download example",
+            ("https://cache1.example/file", "https://cache2.example/file"),
+            retry_each_url_once=True,
+        )
+
+    assert urls == ["https://cache1.example/file", "https://cache2.example/file"]
+    assert sleeps == [0]
 
 
 @pytest.mark.asyncio
@@ -441,7 +540,7 @@ async def test_download_worker_retries_routeviews_archive_mirrors(
 
 
 @pytest.mark.asyncio
-async def test_download_worker_osdf_preferred_tries_osdf_before_archive_fallback(
+async def test_download_worker_osdf_preferred_reserves_archive_fallback_attempt(
     tmp_path: Path,
 ) -> None:
     osdf_url = (
@@ -456,9 +555,31 @@ async def test_download_worker_osdf_preferred_tries_osdf_before_archive_fallback
         "https://archive2.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/"
         "updates.20250501.0000.bz2"
     )
+    cache_urls = tuple(
+        f"https://cache{i}.example/routeviews/route-views.bknix/bgpdata/2025.05/UPDATES/"
+        "updates.20250501.0000.bz2"
+        for i in range(1, 7)
+    )
+    link_header = ", ".join(
+        f'<{url}>; rel="duplicate"; pri={index}; depth=4'
+        for index, url in enumerate(cache_urls, start=1)
+    )
     session = FakeSession(
         {
-            osdf_url: [FakeResponse(osdf_url, 404)],
+            osdf_url: [
+                FakeResponse(
+                    osdf_url,
+                    307,
+                    headers={
+                        "Location": cache_urls[0],
+                        "Link": link_header,
+                    },
+                )
+            ],
+            cache_urls[0]: [FakeResponse(cache_urls[0], 404)],
+            cache_urls[1]: [FakeResponse(cache_urls[1], 404)],
+            cache_urls[2]: [FakeResponse(cache_urls[2], 404)],
+            cache_urls[3]: [FakeResponse(cache_urls[3], 404)],
             archive2_url: [FakeResponse(archive2_url, 200, body=b"mrt")],
         }
     )
@@ -475,11 +596,19 @@ async def test_download_worker_osdf_preferred_tries_osdf_before_archive_fallback
         asyncio.Queue(),
         mirror_strategy=OsdfPreferredMirrorStrategy(random_start=lambda _n: 1),
     )
-    worker.retry_helper = RetryHelper(max_retries=1, initial_delay=0)
+    worker.retry_helper = RetryHelper(max_retries=4, initial_delay=0)
 
     await worker.download_file(entry)
 
-    assert session.get_urls == [osdf_url, archive2_url]
+    assert session.get_urls == [osdf_url, *cache_urls[:4], archive2_url]
+    assert session.get_kwargs == [
+        {"allow_redirects": False},
+        {},
+        {},
+        {},
+        {},
+        {},
+    ]
     assert (
         tmp_path / "route-views.bknix" / "updates.20250501.0000.bz2"
     ).read_bytes() == b"mrt"
@@ -584,7 +713,7 @@ async def test_download_worker_retries_routeviews_head_on_secondary(
 
 
 @pytest.mark.asyncio
-async def test_download_worker_osdf_preferred_head_follows_redirects(
+async def test_download_worker_osdf_preferred_head_uses_discovered_cache_url(
     tmp_path: Path,
 ) -> None:
     osdf_url = (
@@ -595,12 +724,26 @@ async def test_download_worker_osdf_preferred_head_follows_redirects(
         "https://archive.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/"
         "updates.20250501.0000.bz2"
     )
+    cache_url = (
+        "https://cache1.example/routeviews/route-views.bknix/bgpdata/2025.05/UPDATES/"
+        "updates.20250501.0000.bz2"
+    )
     last_modified = datetime.datetime(2025, 5, 1, tzinfo=datetime.UTC)
     session = FakeSession(
         {
             osdf_url: [
                 FakeResponse(
                     osdf_url,
+                    307,
+                    headers={
+                        "Location": cache_url,
+                        "Link": f'<{cache_url}>; rel="duplicate"; pri=1; depth=4',
+                    },
+                )
+            ],
+            cache_url: [
+                FakeResponse(
+                    cache_url,
                     200,
                     headers={
                         "Content-Length": "3",
@@ -634,9 +777,10 @@ async def test_download_worker_osdf_preferred_head_follows_redirects(
 
     await worker.download_file(entry)
 
-    assert session.head_urls == [osdf_url]
-    assert session.head_kwargs == [{"allow_redirects": True}]
-    assert session.get_urls == []
+    assert session.get_urls == [osdf_url]
+    assert session.get_kwargs == [{"allow_redirects": False}]
+    assert session.head_urls == [cache_url]
+    assert session.head_kwargs == [{}]
 
 
 @pytest.mark.asyncio

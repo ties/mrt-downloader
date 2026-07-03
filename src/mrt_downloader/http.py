@@ -23,8 +23,14 @@ from mrt_downloader.cache import (
 from mrt_downloader.collector_index import (
     process_index_entry,
 )
-from mrt_downloader.mirrors import ArchiveRandomMirrorStrategy, FileMirrorStrategy
+from mrt_downloader.mirrors import (
+    ArchiveRandomMirrorStrategy,
+    FileMirrorStrategy,
+    MirrorAttemptPlan,
+    parse_duplicate_link_urls,
+)
 from mrt_downloader.models import CollectorFileEntry, CollectorIndexEntry, Download
+from mrt_downloader.url_utils import is_absolute_http_url
 
 LOG = logging.getLogger(__name__)
 
@@ -132,22 +138,30 @@ class RetryHelper:
         operation_name: str,
         urls: Sequence[str],
         retry_client_statuses: frozenset[int] = frozenset(),
+        retry_each_url_once: bool = False,
     ) -> T:
         """Execute an async URL operation with retry logic.
 
         If more than one URL is supplied, retries rotate through the alternatives
-        in the supplied order.
+        in the supplied order unless retry_each_url_once is set.
         """
         if not urls:
             raise ValueError("At least one URL is required")
 
         last_exception = None
+        attempt_limit = (
+            min(self.max_retries + 1, len(urls))
+            if retry_each_url_once
+            else self.max_retries + 1
+        )
         retryable_client_statuses = (
             DEFAULT_RETRY_CLIENT_STATUSES | retry_client_statuses
         )
 
-        for attempt in range(self.max_retries + 1):
-            attempt_url = urls[attempt % len(urls)]
+        for attempt in range(attempt_limit):
+            attempt_url = (
+                urls[attempt] if retry_each_url_once else urls[attempt % len(urls)]
+            )
             try:
                 return await operation(attempt_url)
             except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError) as e:
@@ -159,11 +173,11 @@ class RetryHelper:
                         raise
 
                 # Calculate backoff delay
-                if attempt < self.max_retries:
+                if attempt < attempt_limit - 1:
                     delay = self._retry_delay(attempt, e)
                     target = f" via {attempt_url}" if attempt_url else ""
                     message = (
-                        f"{operation_name}{target} failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
+                        f"{operation_name}{target} failed (attempt {attempt + 1}/{attempt_limit}): {e}. "
                         f"Retrying in {delay:.2f}s..."
                     )
 
@@ -184,8 +198,7 @@ class RetryHelper:
                     await self.sleep(delay)
                 else:
                     error_message = (
-                        f"{operation_name} failed after {self.max_retries + 1} "
-                        f"attempts: {e}"
+                        f"{operation_name} failed after {attempt_limit} attempts: {e}"
                     )
                     click.echo(click.style(f"ERROR: {error_message}", fg="red"))
                     LOG.error(error_message)
@@ -226,6 +239,54 @@ def build_session() -> aiohttp.ClientSession:
         timeout=ClientTimeout(total=15 * 60, sock_connect=30),
         headers={"User-Agent": USER_AGENT},
     )
+
+
+def _header_values(headers, name: str) -> tuple[str, ...]:
+    try:
+        return tuple(headers.getall(name, ()))
+    except AttributeError:
+        value = headers.get(name)
+        return (value,) if value else ()
+
+
+def _dedupe_url_groups(
+    groups: Sequence[Sequence[str]],
+) -> tuple[tuple[str, ...], ...]:
+    deduped_groups: list[tuple[str, ...]] = []
+    seen: set[str] = set()
+
+    for group in groups:
+        deduped_group = []
+        for url in group:
+            if url in seen:
+                continue
+            deduped_group.append(url)
+            seen.add(url)
+        if deduped_group:
+            deduped_groups.append(tuple(deduped_group))
+
+    return tuple(deduped_groups)
+
+
+def _build_grouped_retry_sequence(
+    groups: Sequence[Sequence[str]],
+    attempt_budget: int,
+) -> tuple[str, ...]:
+    retry_sequence: list[str] = []
+    remaining_budget = max(0, attempt_budget)
+    groups = tuple(group for group in groups if group)
+
+    for index, group in enumerate(groups):
+        if remaining_budget <= 0:
+            break
+
+        remaining_groups = len(groups) - index - 1
+        attempts_for_group = max(1, remaining_budget - remaining_groups)
+        attempts_for_group = min(len(group), attempts_for_group)
+        retry_sequence.extend(group[:attempts_for_group])
+        remaining_budget -= attempts_for_group
+
+    return tuple(retry_sequence)
 
 
 async def download_file(session: aiohttp.ClientSession, download: Download) -> None:
@@ -323,11 +384,65 @@ class DownloadWorker:
         self.retry_helper = RetryHelper()
         self.mirror_strategy = mirror_strategy or ArchiveRandomMirrorStrategy()
 
+    async def _resolve_file_plan(self, plan: MirrorAttemptPlan) -> MirrorAttemptPlan:
+        if plan.osdf_director_url is None:
+            return plan
+
+        try:
+            async with self.session.get(
+                plan.osdf_director_url,
+                allow_redirects=False,
+            ) as response:
+                if response.status not in {301, 302, 303, 307, 308}:
+                    return plan
+
+                osdf_urls: list[str] = []
+                location = response.headers.get("Location")
+                if location and is_absolute_http_url(location):
+                    osdf_urls.append(location)
+                osdf_urls.extend(
+                    parse_duplicate_link_urls(_header_values(response.headers, "Link"))
+                )
+        except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError) as e:
+            LOG.debug(
+                "Failed to discover OSDF alternatives for %s: %s",
+                plan.osdf_director_url,
+                e,
+            )
+            return plan
+
+        fallback_urls = tuple(url for url in plan.urls if url != plan.osdf_director_url)
+        retry_groups = _dedupe_url_groups((tuple(osdf_urls), fallback_urls))
+        if not retry_groups:
+            return plan
+
+        retry_sequence = _build_grouped_retry_sequence(
+            retry_groups,
+            self.retry_helper.max_retries + 1,
+        )
+        if not retry_sequence:
+            return plan
+
+        return MirrorAttemptPlan(
+            urls=retry_sequence,
+            retry_client_statuses=plan.retry_client_statuses,
+            retry_each_url_once=True,
+        )
+
     async def download_file(self, entry: CollectorFileEntry) -> None:
         target_file = self.naming_strategy.get_path(self.base_dir, entry)
 
         # Create target directory if it does not exist
         target_file.parent.mkdir(parents=True, exist_ok=True)
+
+        base_plan = self.mirror_strategy.file_plan(entry)
+        resolved_plan: MirrorAttemptPlan | None = None
+
+        async def get_plan() -> MirrorAttemptPlan:
+            nonlocal resolved_plan
+            if resolved_plan is None:
+                resolved_plan = await self._resolve_file_plan(base_plan)
+            return resolved_plan
 
         t0 = time.time()
         if target_file.is_file():
@@ -339,7 +454,7 @@ class DownloadWorker:
                 return
 
             # check if file is modified with retry logic
-            plan = self.mirror_strategy.file_plan(entry)
+            plan = await get_plan()
             head_kwargs = {"allow_redirects": True} if plan.head_allow_redirects else {}
 
             async def check_modified(url: str):
@@ -361,6 +476,7 @@ class DownloadWorker:
                 f"HEAD {entry.url}",
                 plan.urls,
                 retry_client_statuses=plan.retry_client_statuses,
+                retry_each_url_once=plan.retry_each_url_once,
             )
 
             if content_length and last_modified:
@@ -379,7 +495,7 @@ class DownloadWorker:
                     return
 
         # Download file with retry logic
-        plan = self.mirror_strategy.file_plan(entry)
+        plan = await get_plan()
 
         async def download(url: str):
             async with self.session.get(url) as response:
@@ -433,6 +549,7 @@ class DownloadWorker:
             f"Download {entry.url}",
             plan.urls,
             retry_client_statuses=plan.retry_client_statuses,
+            retry_each_url_once=plan.retry_each_url_once,
         )
 
     async def run(self) -> int:

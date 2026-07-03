@@ -1,10 +1,11 @@
 import random
 import urllib.parse
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 from mrt_downloader.models import CollectorFileEntry
+from mrt_downloader.url_utils import is_absolute_http_url
 
 MirrorUse = Literal["file", "index"]
 Project = Literal["ris", "routeviews"]
@@ -20,6 +21,8 @@ class MirrorAttemptPlan:
     urls: tuple[str, ...]
     retry_client_statuses: frozenset[int] = frozenset()
     head_allow_redirects: bool = False
+    osdf_director_url: str | None = None
+    retry_each_url_once: bool = False
 
 
 class FileMirrorStrategy(Protocol):
@@ -99,6 +102,98 @@ def _retry_client_statuses_for_urls(urls: tuple[str, ...]) -> frozenset[int]:
     if len(urls) > 1:
         return MIRRORED_FILE_RETRY_CLIENT_STATUSES
     return frozenset()
+
+
+def _split_link_header(value: str) -> tuple[str, ...]:
+    links: list[str] = []
+    start = 0
+    in_quote = False
+    in_angle = False
+    escaped = False
+
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+            continue
+
+        if in_quote and char == "\\":
+            escaped = True
+            continue
+
+        if char == '"' and not in_angle:
+            in_quote = not in_quote
+            continue
+
+        if not in_quote:
+            if char == "<":
+                in_angle = True
+            elif char == ">":
+                in_angle = False
+            elif char == "," and not in_angle:
+                links.append(value[start:index].strip())
+                start = index + 1
+
+    links.append(value[start:].strip())
+    return tuple(link for link in links if link)
+
+
+def _strip_quoted(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+        return value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    return value
+
+
+def _parse_link_params(value: str) -> dict[str, str]:
+    params: dict[str, str] = {}
+    for part in value.split(";"):
+        name, separator, raw_value = part.strip().partition("=")
+        if not name:
+            continue
+        params[name.lower()] = _strip_quoted(raw_value) if separator else ""
+    return params
+
+
+def parse_duplicate_link_urls(header_values: Iterable[str]) -> tuple[str, ...]:
+    links: list[tuple[int | None, int, str]] = []
+    order = 0
+
+    for header_value in header_values:
+        for link_value in _split_link_header(header_value):
+            link_order = order
+            order += 1
+            if not link_value.startswith("<"):
+                continue
+
+            url_end = link_value.find(">")
+            if url_end == -1:
+                continue
+
+            url = link_value[1:url_end].strip()
+            if not is_absolute_http_url(url):
+                continue
+
+            params = _parse_link_params(link_value[url_end + 1 :])
+            rels = {rel.lower() for rel in params.get("rel", "").split()}
+            if "duplicate" not in rels:
+                continue
+
+            try:
+                priority = int(params["pri"])
+            except (KeyError, ValueError):
+                priority = None
+
+            links.append((priority, link_order, url))
+
+    links.sort(
+        key=lambda link: (
+            link[0] is None,
+            link[0] if link[0] is not None else 0,
+            link[1],
+        )
+    )
+
+    return tuple(dict.fromkeys(url for _priority, _index, url in links))
 
 
 def _routeviews_archive_path(url: str) -> tuple[str, str, str] | None:
@@ -181,6 +276,7 @@ class OsdfPreferredMirrorStrategy:
             urls=urls,
             retry_client_statuses=_retry_client_statuses_for_urls(urls),
             head_allow_redirects=True,
+            osdf_director_url=osdf_url,
         )
 
 
