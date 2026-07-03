@@ -1,6 +1,7 @@
 ## v0.18.0
 
   * Try OSDF `Links` in order of preference and finally try routeviews primary.
+  * Prefer OSDF for routeviews data
 
 ## v0.17.0
 
