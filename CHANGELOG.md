@@ -1,3 +1,7 @@
+## v0.18.0
+
+  * Try OSDF `Links` in order of preference and finally try routeviews primary.
+
 ## v0.17.0
 
   * Mirror selection is a selectable strategy now
