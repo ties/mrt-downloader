@@ -95,9 +95,9 @@ CLICK_DATETIME_TYPE = click.DateTime(
     "--num-threads",
     type=int,
     default=os.environ.get(
-        "MRT_DOWNLOADER_PARALLELISM", min(16, multiprocessing.cpu_count())
+        "MRT_DOWNLOADER_PARALLELISM", min(4, multiprocessing.cpu_count())
     ),
-    help="Number of download worker threads (default: min(16, #cores). override using MRT_DOWNLOADER_PARALLELISM)",
+    help="Number of download worker threads (default: min(4, #cores). override using MRT_DOWNLOADER_PARALLELISM)",
 )
 @click.option(
     "--force-cache-refresh",

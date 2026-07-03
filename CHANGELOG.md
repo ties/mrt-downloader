@@ -2,6 +2,7 @@
 
   * Try OSDF `Links` in order of preference and finally try routeviews primary.
   * Prefer OSDF for routeviews data
+  * Drop default parallelism to four connections
 
 ## v0.17.0
 
