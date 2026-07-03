@@ -10,7 +10,7 @@ from mrt_downloader.url_utils import is_absolute_http_url
 MirrorUse = Literal["file", "index"]
 Project = Literal["ris", "routeviews"]
 RouteviewsMirrorStrategyName = Literal["archive-random", "osdf-preferred"]
-DEFAULT_ROUTEVIEWS_MIRROR_STRATEGY: RouteviewsMirrorStrategyName = "archive-random"
+DEFAULT_ROUTEVIEWS_MIRROR_STRATEGY: RouteviewsMirrorStrategyName = "osdf-preferred"
 ROUTEVIEWS_OSDF_HOST = "osdf-director.osg-htc.org"
 ROUTEVIEWS_OSDF_PATH_PREFIX = "/routeviews"
 MIRRORED_FILE_RETRY_CLIENT_STATUSES = frozenset((404,))
