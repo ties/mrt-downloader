@@ -32,6 +32,7 @@ from mrt_downloader.models import (
     CollectorFileEntry,
     CollectorIndexEntry,
     CollectorInfo,
+    ExistingFilePolicy,
 )
 
 LOG = logging.getLogger(__name__)
@@ -39,6 +40,28 @@ LOG = logging.getLogger(__name__)
 BVIEW_DATE_TYPE = click.DateTime(
     formats=["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M"]
 )
+
+
+def validate_existing_file_policy_config(
+    project: frozenset[Literal["ris", "routeviews"]],
+    routeviews_mirror_strategy: RouteviewsMirrorStrategyName,
+    existing_file_policy: ExistingFilePolicy,
+    mirror_strategies: Mapping[Project, FileMirrorStrategy] | None = None,
+) -> None:
+    routeviews_strategy_is_custom = (
+        mirror_strategies is not None and "routeviews" in mirror_strategies
+    )
+    if (
+        existing_file_policy == "validate"
+        and "routeviews" in project
+        and routeviews_mirror_strategy == "osdf-preferred"
+        and not routeviews_strategy_is_custom
+    ):
+        raise ValueError(
+            "existing-file policy 'validate' cannot be used with RouteViews "
+            "OSDF-preferred mirrors; use '--routeviews-mirror-strategy archive-random' "
+            "or a different existing-file policy"
+        )
 
 
 def select_files_for_download(
@@ -79,11 +102,18 @@ async def download_files(
         DEFAULT_ROUTEVIEWS_MIRROR_STRATEGY
     ),
     mirror_strategies: Mapping[Project, FileMirrorStrategy] | None = None,
+    existing_file_policy: ExistingFilePolicy = "trust-existing",
 ):
     """Gather the list of update files per timestamp per rrc and download them."""
     assert start_time.tzinfo == datetime.UTC, "Start time must be in UTC"
     assert end_time.tzinfo == datetime.UTC, "End time must be in UTC"
     assert start_time < end_time, "Start time must be before end time"
+    validate_existing_file_policy_config(
+        project,
+        routeviews_mirror_strategy,
+        existing_file_policy,
+        mirror_strategies,
+    )
 
     # Initialize cache database
     db_path = get_cache_db_path()
@@ -191,6 +221,7 @@ async def download_files(
             session,
             queue,
             mirror_strategy=mirror_strategy,
+            existing_file_policy=existing_file_policy,
         )
 
         # Add the relevant files to queue

@@ -1,5 +1,7 @@
 ## v0.17.0
 
+  * Make verification behaviour (re-download or not) configurable, and store
+    download metadata next to files.
   * Try OSDF `Links` in order of preference and finally try routeviews primary.
   * Prefer OSDF for routeviews data. Choice can be set with `--routeviews-mirror-strategy=osdf-preferred`.
     The heuristic will do [retries-1] retries on different OSDF `Links`and one

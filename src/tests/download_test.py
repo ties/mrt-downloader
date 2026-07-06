@@ -3,7 +3,8 @@ import logging
 
 import pytest
 
-from mrt_downloader.download import select_files_for_download
+from mrt_downloader.download import download_files, select_files_for_download
+from mrt_downloader.files import ByCollectorStrategy
 from mrt_downloader.models import CollectorFileEntry, CollectorInfo
 
 
@@ -40,3 +41,18 @@ def test_select_files_for_download_skips_malformed_cached_filename(
     assert selected == [valid_entry]
     assert "Skipping file with invalid MRT filename" in caplog.text
     assert "updates.20260521.1503.bad.gz" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_download_files_rejects_routeviews_osdf_validate_policy(tmp_path) -> None:
+    with pytest.raises(ValueError, match="existing-file policy 'validate'"):
+        await download_files(
+            tmp_path,
+            datetime.datetime(2025, 5, 1, tzinfo=datetime.UTC),
+            datetime.datetime(2025, 5, 2, tzinfo=datetime.UTC),
+            num_workers=1,
+            naming_strategy=ByCollectorStrategy(),
+            project=frozenset({"routeviews"}),
+            routeviews_mirror_strategy="osdf-preferred",
+            existing_file_policy="validate",
+        )

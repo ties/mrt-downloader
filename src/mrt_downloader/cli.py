@@ -14,7 +14,7 @@ from typing import Literal, Optional
 
 import click
 
-from mrt_downloader.download import download_files
+from mrt_downloader.download import download_files, validate_existing_file_policy_config
 from mrt_downloader.files import (
     ByCollectorPartitionedStategy,
     ByMonthStrategy,
@@ -25,6 +25,7 @@ from mrt_downloader.mirrors import (
     DEFAULT_ROUTEVIEWS_MIRROR_STRATEGY,
     RouteviewsMirrorStrategyName,
 )
+from mrt_downloader.models import ExistingFilePolicy
 
 LOG = logging.getLogger(__name__)  #
 logging.basicConfig(level=logging.INFO)
@@ -112,6 +113,13 @@ CLICK_DATETIME_TYPE = click.DateTime(
     show_default=True,
     help="RouteViews file mirror strategy.",
 )
+@click.option(
+    "--existing-file-policy",
+    type=click.Choice(["trust-existing", "validate", "redownload"]),
+    default="trust-existing",
+    show_default=True,
+    help="How to handle target files that already exist.",
+)
 def cli(
     target_dir: Path,
     create_target: bool,
@@ -131,6 +139,7 @@ def cli(
     routeviews_mirror_strategy: RouteviewsMirrorStrategyName = (
         DEFAULT_ROUTEVIEWS_MIRROR_STRATEGY
     ),
+    existing_file_policy: ExistingFilePolicy = "trust-existing",
 ):
     """
     Download a set of BGP updates from RIS.
@@ -199,6 +208,16 @@ def cli(
         )
         sys.exit(1)
 
+    try:
+        validate_existing_file_policy_config(
+            frozenset(project),
+            routeviews_mirror_strategy,
+            existing_file_policy,
+        )
+    except ValueError as e:
+        click.echo(click.style(f"Error: {e}", fg="red"))
+        sys.exit(1)
+
     click.echo(
         click.style(
             f"Downloading updates from {start_time} to {end_time} to {target_dir}",
@@ -258,6 +277,7 @@ def cli(
             project=frozenset(project),
             force_cache_refresh=force_cache_refresh,
             routeviews_mirror_strategy=routeviews_mirror_strategy,
+            existing_file_policy=existing_file_policy,
         )
     )
 

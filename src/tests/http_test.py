@@ -1,9 +1,9 @@
 import asyncio
 import datetime
-import email.utils
-import os
+import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import aiohttp
 import pytest
@@ -90,16 +90,16 @@ class FakeSession:
     def __init__(self, responses: dict[str, list[FakeResponse]]):
         self.responses = responses
         self.get_urls: list[str] = []
-        self.get_kwargs: list[dict[str, bool]] = []
+        self.get_kwargs: list[dict[str, Any]] = []
         self.head_urls: list[str] = []
-        self.head_kwargs: list[dict[str, bool]] = []
+        self.head_kwargs: list[dict[str, Any]] = []
 
-    def get(self, url: str, **kwargs: bool) -> FakeResponse:
+    def get(self, url: str, **kwargs: Any) -> FakeResponse:
         self.get_urls.append(url)
         self.get_kwargs.append(kwargs)
         return self.responses[url].pop(0)
 
-    def head(self, url: str, **kwargs: bool) -> FakeResponse:
+    def head(self, url: str, **kwargs: Any) -> FakeResponse:
         self.head_urls.append(url)
         self.head_kwargs.append(kwargs)
         return self.responses[url].pop(0)
@@ -122,6 +122,35 @@ def _client_error(
         status=status,
         message=f"HTTP {status}",
         headers=headers or {},
+    )
+
+
+def _metadata_path(target_file: Path) -> Path:
+    return target_file.with_name(f"{target_file.name}.download-metadata.json")
+
+
+def _write_metadata(
+    target_file: Path,
+    *,
+    etag: str = '"abc"',
+    last_modified: str = "Thu, 01 May 2025 00:00:00 GMT",
+    content_length: int = 3,
+) -> None:
+    _metadata_path(target_file).write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "source_url": "https://example/source",
+                "final_url": "https://example/source",
+                "validation_url": "https://example/source",
+                "etag": etag,
+                "last_modified": last_modified,
+                "content_length": content_length,
+                "downloaded_at": "2025-05-01T00:00:00+00:00",
+                "validated_at": "2025-05-01T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
     )
 
 
@@ -656,7 +685,276 @@ async def test_download_worker_retries_incomplete_payload_without_partial_target
 
 
 @pytest.mark.asyncio
-async def test_download_worker_retries_routeviews_head_on_secondary(
+async def test_download_worker_default_policy_trusts_existing_target(
+    tmp_path: Path,
+) -> None:
+    url = "https://data.ris.ripe.net/rrc00/2025.05/updates.20250501.0000.gz"
+    session = FakeSession({})
+    entry = CollectorFileEntry(
+        collector=RIS_COLLECTOR,
+        filename="updates.20250501.0000.gz",
+        url=url,
+        file_type="update",
+    )
+    naming_strategy = ByCollectorStrategy()
+    target_file = naming_strategy.get_path(tmp_path, entry)
+    target_file.parent.mkdir(parents=True)
+    target_file.write_bytes(b"existing")
+    worker = DownloadWorker(
+        tmp_path,
+        naming_strategy,
+        session,  # type: ignore[arg-type]
+        asyncio.Queue(),
+    )
+
+    await worker.download_file(entry)
+
+    assert target_file.read_bytes() == b"existing"
+    assert session.get_urls == []
+    assert session.head_urls == []
+
+
+@pytest.mark.asyncio
+async def test_download_worker_validate_uses_conditional_get_304(
+    tmp_path: Path,
+) -> None:
+    url = "https://data.ris.ripe.net/rrc00/2025.05/updates.20250501.0000.gz"
+    last_modified = "Thu, 01 May 2025 00:00:00 GMT"
+    session = FakeSession(
+        {
+            url: [
+                FakeResponse(
+                    url,
+                    304,
+                    headers={
+                        "ETag": '"abc"',
+                        "Last-Modified": last_modified,
+                    },
+                )
+            ]
+        }
+    )
+    entry = CollectorFileEntry(
+        collector=RIS_COLLECTOR,
+        filename="updates.20250501.0000.gz",
+        url=url,
+        file_type="update",
+    )
+    naming_strategy = ByCollectorStrategy()
+    target_file = naming_strategy.get_path(tmp_path, entry)
+    target_file.parent.mkdir(parents=True)
+    target_file.write_bytes(b"mrt")
+    _write_metadata(target_file, last_modified=last_modified)
+    worker = DownloadWorker(
+        tmp_path,
+        naming_strategy,
+        session,  # type: ignore[arg-type]
+        asyncio.Queue(),
+        existing_file_policy="validate",
+    )
+    worker.retry_helper = RetryHelper(max_retries=0, initial_delay=0)
+
+    await worker.download_file(entry)
+
+    assert target_file.read_bytes() == b"mrt"
+    assert session.get_urls == [url]
+    assert session.get_kwargs == [
+        {
+            "headers": {
+                "If-None-Match": '"abc"',
+                "If-Modified-Since": last_modified,
+            }
+        }
+    ]
+    assert session.head_urls == []
+    metadata = json.loads(_metadata_path(target_file).read_text(encoding="utf-8"))
+    assert metadata["etag"] == '"abc"'
+    assert metadata["validated_at"] != "2025-05-01T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_download_worker_validate_conditional_get_200_replaces_target(
+    tmp_path: Path,
+) -> None:
+    url = "https://data.ris.ripe.net/rrc00/2025.05/updates.20250501.0000.gz"
+    last_modified = "Thu, 01 May 2025 00:00:00 GMT"
+    session = FakeSession(
+        {
+            url: [
+                FakeResponse(
+                    url,
+                    200,
+                    body=b"new",
+                    headers={
+                        "Content-Length": "3",
+                        "ETag": '"def"',
+                        "Last-Modified": last_modified,
+                    },
+                )
+            ]
+        }
+    )
+    entry = CollectorFileEntry(
+        collector=RIS_COLLECTOR,
+        filename="updates.20250501.0000.gz",
+        url=url,
+        file_type="update",
+    )
+    naming_strategy = ByCollectorStrategy()
+    target_file = naming_strategy.get_path(tmp_path, entry)
+    target_file.parent.mkdir(parents=True)
+    target_file.write_bytes(b"old")
+    _write_metadata(target_file, last_modified=last_modified)
+    worker = DownloadWorker(
+        tmp_path,
+        naming_strategy,
+        session,  # type: ignore[arg-type]
+        asyncio.Queue(),
+        existing_file_policy="validate",
+    )
+    worker.retry_helper = RetryHelper(max_retries=0, initial_delay=0)
+
+    await worker.download_file(entry)
+
+    assert target_file.read_bytes() == b"new"
+    assert session.get_urls == [url]
+    assert session.get_kwargs == [
+        {
+            "headers": {
+                "If-None-Match": '"abc"',
+                "If-Modified-Since": last_modified,
+            }
+        }
+    ]
+    metadata = json.loads(_metadata_path(target_file).read_text(encoding="utf-8"))
+    assert metadata["etag"] == '"def"'
+    assert metadata["content_length"] == 3
+    assert not list(target_file.parent.glob("*.download-metadata.json.tmp"))
+
+
+@pytest.mark.asyncio
+async def test_download_worker_validate_without_metadata_redownloads(
+    tmp_path: Path,
+) -> None:
+    url = "https://data.ris.ripe.net/rrc00/2025.05/updates.20250501.0000.gz"
+    session = FakeSession({url: [FakeResponse(url, 200, body=b"fresh")]})
+    entry = CollectorFileEntry(
+        collector=RIS_COLLECTOR,
+        filename="updates.20250501.0000.gz",
+        url=url,
+        file_type="update",
+    )
+    naming_strategy = ByCollectorStrategy()
+    target_file = naming_strategy.get_path(tmp_path, entry)
+    target_file.parent.mkdir(parents=True)
+    target_file.write_bytes(b"old")
+    worker = DownloadWorker(
+        tmp_path,
+        naming_strategy,
+        session,  # type: ignore[arg-type]
+        asyncio.Queue(),
+        existing_file_policy="validate",
+    )
+    worker.retry_helper = RetryHelper(max_retries=0, initial_delay=0)
+
+    await worker.download_file(entry)
+
+    assert target_file.read_bytes() == b"fresh"
+    assert session.get_urls == [url]
+    assert session.get_kwargs == [{}]
+
+
+@pytest.mark.asyncio
+async def test_download_worker_validate_304_size_mismatch_redownloads(
+    tmp_path: Path,
+) -> None:
+    url = "https://data.ris.ripe.net/rrc00/2025.05/updates.20250501.0000.gz"
+    last_modified = "Thu, 01 May 2025 00:00:00 GMT"
+    session = FakeSession(
+        {
+            url: [
+                FakeResponse(url, 304),
+                FakeResponse(
+                    url,
+                    200,
+                    body=b"complete",
+                    headers={
+                        "Content-Length": "8",
+                        "Last-Modified": last_modified,
+                    },
+                ),
+            ]
+        }
+    )
+    entry = CollectorFileEntry(
+        collector=RIS_COLLECTOR,
+        filename="updates.20250501.0000.gz",
+        url=url,
+        file_type="update",
+    )
+    naming_strategy = ByCollectorStrategy()
+    target_file = naming_strategy.get_path(tmp_path, entry)
+    target_file.parent.mkdir(parents=True)
+    target_file.write_bytes(b"bad")
+    _write_metadata(target_file, last_modified=last_modified, content_length=8)
+    worker = DownloadWorker(
+        tmp_path,
+        naming_strategy,
+        session,  # type: ignore[arg-type]
+        asyncio.Queue(),
+        existing_file_policy="validate",
+    )
+    worker.retry_helper = RetryHelper(max_retries=0, initial_delay=0)
+
+    await worker.download_file(entry)
+
+    assert target_file.read_bytes() == b"complete"
+    assert session.get_urls == [url, url]
+    assert session.get_kwargs == [
+        {
+            "headers": {
+                "If-None-Match": '"abc"',
+                "If-Modified-Since": last_modified,
+            }
+        },
+        {},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_download_worker_redownload_policy_ignores_existing_target(
+    tmp_path: Path,
+) -> None:
+    url = "https://data.ris.ripe.net/rrc00/2025.05/updates.20250501.0000.gz"
+    session = FakeSession({url: [FakeResponse(url, 200, body=b"fresh")]})
+    entry = CollectorFileEntry(
+        collector=RIS_COLLECTOR,
+        filename="updates.20250501.0000.gz",
+        url=url,
+        file_type="update",
+    )
+    naming_strategy = ByCollectorStrategy()
+    target_file = naming_strategy.get_path(tmp_path, entry)
+    target_file.parent.mkdir(parents=True)
+    target_file.write_bytes(b"old")
+    worker = DownloadWorker(
+        tmp_path,
+        naming_strategy,
+        session,  # type: ignore[arg-type]
+        asyncio.Queue(),
+        existing_file_policy="redownload",
+    )
+    worker.retry_helper = RetryHelper(max_retries=0, initial_delay=0)
+
+    await worker.download_file(entry)
+
+    assert target_file.read_bytes() == b"fresh"
+    assert session.get_urls == [url]
+    assert session.get_kwargs == [{}]
+
+
+@pytest.mark.asyncio
+async def test_download_worker_validate_retries_routeviews_archive_mirrors(
     tmp_path: Path,
 ) -> None:
     archive_url = (
@@ -667,19 +965,17 @@ async def test_download_worker_retries_routeviews_head_on_secondary(
         "https://archive2.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/"
         "updates.20250501.0000.bz2"
     )
-    last_modified = datetime.datetime(2025, 5, 1, tzinfo=datetime.UTC)
+    last_modified = "Thu, 01 May 2025 00:00:00 GMT"
     session = FakeSession(
         {
             archive_url: [FakeResponse(archive_url, 404)],
             archive2_url: [
                 FakeResponse(
                     archive2_url,
-                    200,
+                    304,
                     headers={
-                        "Content-Length": "3",
-                        "Last-Modified": email.utils.format_datetime(
-                            last_modified, usegmt=True
-                        ),
+                        "ETag": '"abc"',
+                        "Last-Modified": last_modified,
                     },
                 )
             ],
@@ -695,92 +991,106 @@ async def test_download_worker_retries_routeviews_head_on_secondary(
     target_file = naming_strategy.get_path(tmp_path, entry)
     target_file.parent.mkdir(parents=True)
     target_file.write_bytes(b"mrt")
-    os.utime(target_file, (last_modified.timestamp(), last_modified.timestamp()))
+    _write_metadata(target_file, last_modified=last_modified)
     worker = DownloadWorker(
         tmp_path,
         naming_strategy,
         session,  # type: ignore[arg-type]
         asyncio.Queue(),
         mirror_strategy=ArchiveRandomMirrorStrategy(random_start=lambda _n: 0),
+        existing_file_policy="validate",
     )
     worker.retry_helper = RetryHelper(max_retries=1, initial_delay=0)
 
     await worker.download_file(entry)
 
-    assert session.head_urls == [archive_url, archive2_url]
-    assert session.head_kwargs == [{}, {}]
-    assert session.get_urls == []
+    assert session.get_urls == [archive_url, archive2_url]
+    assert session.get_kwargs == [
+        {
+            "headers": {
+                "If-None-Match": '"abc"',
+                "If-Modified-Since": last_modified,
+            }
+        },
+        {
+            "headers": {
+                "If-None-Match": '"abc"',
+                "If-Modified-Since": last_modified,
+            }
+        },
+    ]
+    assert session.head_urls == []
 
 
 @pytest.mark.asyncio
-async def test_download_worker_osdf_preferred_head_uses_discovered_cache_url(
+async def test_download_worker_failed_download_leaves_existing_target_untouched(
     tmp_path: Path,
 ) -> None:
-    osdf_url = (
-        "https://osdf-director.osg-htc.org/routeviews/route-views.bknix/bgpdata/2025.05/UPDATES/"
-        "updates.20250501.0000.bz2"
+    url = "https://data.ris.ripe.net/rrc00/2025.05/updates.20250501.0000.gz"
+    response = FakeResponse(url, 200, body=b"partial")
+    response.content = FailingContent(
+        b"partial",
+        aiohttp.ClientPayloadError("Response payload is not completed"),
     )
-    archive_url = (
-        "https://archive.routeviews.org/route-views.bknix/bgpdata/2025.05/UPDATES/"
-        "updates.20250501.0000.bz2"
-    )
-    cache_url = (
-        "https://cache1.example/routeviews/route-views.bknix/bgpdata/2025.05/UPDATES/"
-        "updates.20250501.0000.bz2"
-    )
-    last_modified = datetime.datetime(2025, 5, 1, tzinfo=datetime.UTC)
-    session = FakeSession(
-        {
-            osdf_url: [
-                FakeResponse(
-                    osdf_url,
-                    307,
-                    headers={
-                        "Location": cache_url,
-                        "Link": f'<{cache_url}>; rel="duplicate"; pri=1; depth=4',
-                    },
-                )
-            ],
-            cache_url: [
-                FakeResponse(
-                    cache_url,
-                    200,
-                    headers={
-                        "Content-Length": "3",
-                        "Last-Modified": email.utils.format_datetime(
-                            last_modified, usegmt=True
-                        ),
-                    },
-                )
-            ],
-        }
-    )
+    session = FakeSession({url: [response]})
     entry = CollectorFileEntry(
-        collector=ROUTEVIEWS_COLLECTOR,
-        filename="updates.20250501.0000.bz2",
-        url=archive_url,
+        collector=RIS_COLLECTOR,
+        filename="updates.20250501.0000.gz",
+        url=url,
         file_type="update",
     )
     naming_strategy = ByCollectorStrategy()
     target_file = naming_strategy.get_path(tmp_path, entry)
     target_file.parent.mkdir(parents=True)
-    target_file.write_bytes(b"mrt")
-    os.utime(target_file, (last_modified.timestamp(), last_modified.timestamp()))
+    target_file.write_bytes(b"existing")
     worker = DownloadWorker(
         tmp_path,
         naming_strategy,
         session,  # type: ignore[arg-type]
         asyncio.Queue(),
-        mirror_strategy=OsdfPreferredMirrorStrategy(random_start=lambda _n: 0),
+        existing_file_policy="redownload",
     )
     worker.retry_helper = RetryHelper(max_retries=0, initial_delay=0)
 
-    await worker.download_file(entry)
+    with pytest.raises(aiohttp.ClientPayloadError):
+        await worker.download_file(entry)
 
-    assert session.get_urls == [osdf_url]
-    assert session.get_kwargs == [{"allow_redirects": False}]
-    assert session.head_urls == [cache_url]
-    assert session.head_kwargs == [{}]
+    assert target_file.read_bytes() == b"existing"
+    assert not list(target_file.parent.glob("*.tmp"))
+
+
+@pytest.mark.asyncio
+async def test_download_worker_failed_download_leaves_no_final_target(
+    tmp_path: Path,
+) -> None:
+    url = "https://data.ris.ripe.net/rrc00/2025.05/updates.20250501.0000.gz"
+    response = FakeResponse(url, 200, body=b"partial")
+    response.content = FailingContent(
+        b"partial",
+        aiohttp.ClientPayloadError("Response payload is not completed"),
+    )
+    session = FakeSession({url: [response]})
+    entry = CollectorFileEntry(
+        collector=RIS_COLLECTOR,
+        filename="updates.20250501.0000.gz",
+        url=url,
+        file_type="update",
+    )
+    naming_strategy = ByCollectorStrategy()
+    target_file = naming_strategy.get_path(tmp_path, entry)
+    worker = DownloadWorker(
+        tmp_path,
+        naming_strategy,
+        session,  # type: ignore[arg-type]
+        asyncio.Queue(),
+    )
+    worker.retry_helper = RetryHelper(max_retries=0, initial_delay=0)
+
+    with pytest.raises(aiohttp.ClientPayloadError):
+        await worker.download_file(entry)
+
+    assert not target_file.exists()
+    assert not list(target_file.parent.glob("*.tmp"))
 
 
 @pytest.mark.asyncio
