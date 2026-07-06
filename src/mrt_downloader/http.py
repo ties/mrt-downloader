@@ -1,15 +1,17 @@
 import asyncio
 import email.utils
+import json
 import logging
 import os
 import random
 import tempfile
 import time
+import warnings
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Awaitable, Callable, Iterable, Literal, Sequence, TypeVar
+from typing import Any, Awaitable, Callable, Iterable, Literal, Sequence, TypeVar
 
 import aiohttp
 import click
@@ -29,7 +31,12 @@ from mrt_downloader.mirrors import (
     MirrorAttemptPlan,
     parse_duplicate_link_urls,
 )
-from mrt_downloader.models import CollectorFileEntry, CollectorIndexEntry, Download
+from mrt_downloader.models import (
+    CollectorFileEntry,
+    CollectorIndexEntry,
+    Download,
+    ExistingFilePolicy,
+)
 from mrt_downloader.url_utils import is_absolute_http_url
 
 LOG = logging.getLogger(__name__)
@@ -41,6 +48,8 @@ except PackageNotFoundError:
 
 USER_AGENT = f"mrt-downloader/{__version__} https://github.com/ties/mrt-downloader"
 DEFAULT_RETRY_CLIENT_STATUSES = frozenset((429,))
+METADATA_VERSION = 1
+METADATA_SUFFIX = ".download-metadata.json"
 
 T = TypeVar("T")
 
@@ -228,6 +237,180 @@ def parse_last_modified(response: aiohttp.ClientResponse) -> datetime | None:
     return None
 
 
+def _content_length(response: aiohttp.ClientResponse) -> int | None:
+    value = response.headers.get("Content-Length", None)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        LOG.info("Failed to parse Content-Length header: %s", value)
+        return None
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _metadata_path(target_file: Path) -> Path:
+    return target_file.with_name(f"{target_file.name}{METADATA_SUFFIX}")
+
+
+def _read_metadata(target_file: Path) -> dict[str, Any] | None:
+    path = _metadata_path(target_file)
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return None
+    except (OSError, json.JSONDecodeError) as e:
+        LOG.warning("Failed to read download metadata for %s: %s", target_file, e)
+        return None
+
+    if not isinstance(data, dict):
+        LOG.warning("Ignoring invalid download metadata for %s", target_file)
+        return None
+    return data
+
+
+def _conditional_headers(metadata: dict[str, Any] | None) -> dict[str, str]:
+    if metadata is None:
+        return {}
+
+    headers: dict[str, str] = {}
+    etag = metadata.get("etag")
+    if isinstance(etag, str) and etag:
+        headers["If-None-Match"] = etag
+
+    last_modified = metadata.get("last_modified")
+    if isinstance(last_modified, str) and last_modified:
+        headers["If-Modified-Since"] = last_modified
+
+    return headers
+
+
+def _metadata_content_length(metadata: dict[str, Any] | None) -> int | None:
+    if metadata is None:
+        return None
+
+    content_length = metadata.get("content_length")
+    if isinstance(content_length, int):
+        return content_length
+    if isinstance(content_length, str):
+        try:
+            return int(content_length)
+        except ValueError:
+            return None
+    return None
+
+
+def _build_metadata(
+    entry: CollectorFileEntry,
+    request_url: str,
+    response: aiohttp.ClientResponse,
+    timestamp: str,
+) -> dict[str, Any]:
+    return {
+        "version": METADATA_VERSION,
+        "source_url": entry.url,
+        "final_url": str(response.url),
+        "validation_url": request_url,
+        "etag": response.headers.get("ETag"),
+        "last_modified": response.headers.get("Last-Modified"),
+        "content_length": _content_length(response),
+        "downloaded_at": timestamp,
+        "validated_at": timestamp,
+    }
+
+
+def _refresh_metadata(
+    metadata: dict[str, Any],
+    entry: CollectorFileEntry,
+    request_url: str,
+    response: aiohttp.ClientResponse,
+    timestamp: str,
+) -> dict[str, Any]:
+    refreshed = dict(metadata)
+    refreshed["version"] = METADATA_VERSION
+    refreshed["source_url"] = entry.url
+    refreshed["final_url"] = str(response.url)
+    refreshed["validation_url"] = request_url
+    if etag := response.headers.get("ETag"):
+        refreshed["etag"] = etag
+    if last_modified := response.headers.get("Last-Modified"):
+        refreshed["last_modified"] = last_modified
+    refreshed["validated_at"] = timestamp
+    refreshed.setdefault("downloaded_at", None)
+    refreshed.setdefault("content_length", None)
+    return refreshed
+
+
+def _write_metadata(target_file: Path, metadata: dict[str, Any]) -> None:
+    metadata_file = _metadata_path(target_file)
+    tmp_file: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            dir=metadata_file.parent,
+            suffix=f"{METADATA_SUFFIX}.tmp",
+            encoding="utf-8",
+            delete=False,
+        ) as f:
+            tmp_file = Path(f.name)
+            json.dump(metadata, f, indent=2, sort_keys=True)
+            f.write("\n")
+            f.flush()
+        tmp_file.replace(metadata_file)
+        tmp_file = None
+    finally:
+        if tmp_file is not None:
+            tmp_file.unlink(missing_ok=True)
+
+
+def _metadata_local_size_matches(
+    target_file: Path,
+    metadata: dict[str, Any] | None,
+) -> bool:
+    content_length = _metadata_content_length(metadata)
+    return content_length is None or target_file.stat().st_size == content_length
+
+
+def _apply_last_modified(target_file: Path, response: aiohttp.ClientResponse) -> None:
+    last_modified = parse_last_modified(response)
+    if last_modified:
+        os.utime(
+            target_file,
+            (last_modified.timestamp(), last_modified.timestamp()),
+        )
+
+
+async def _write_response_body_atomically(
+    response: aiohttp.ClientResponse,
+    target_file: Path,
+) -> None:
+    tmp_file: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=target_file.parent, suffix=".tmp", delete=False
+        ) as f:
+            tmp_file = Path(f.name)
+            async for data in response.content.iter_chunked(131072):
+                f.write(data)
+            f.flush()
+
+        content_length = _content_length(response)
+        if content_length is not None and tmp_file.stat().st_size != content_length:
+            raise aiohttp.ClientPayloadError(
+                f"Downloaded {tmp_file.stat().st_size} bytes, expected {content_length}"
+            )
+
+        tmp_file.replace(target_file)
+        tmp_file = None
+    finally:
+        if tmp_file is not None:
+            tmp_file.unlink(missing_ok=True)
+
+
 def build_session() -> aiohttp.ClientSession:
     """
     Build an aiohttp client session with default settings and user-agent.
@@ -292,36 +475,15 @@ def _build_grouped_retry_sequence(
 async def download_file(session: aiohttp.ClientSession, download: Download) -> None:
     t0 = time.time()
     if download.target_file.is_file():
-        # check if file is modified
-        async with session.head(download.url) as response:
-            content_length = response.headers.get("Content-Length", None)
-            last_modified = parse_last_modified(response)
-            if content_length and last_modified:
-                # Stat the current file
-                stat = download.target_file.stat()
-                if (
-                    stat.st_size == int(content_length)
-                    and stat.st_mtime == last_modified.timestamp()
-                ):
-                    LOG.debug(
-                        "Skipping %s, already downloaded",
-                        download.target_file,
-                    )
-                    return
+        LOG.debug("Skipping %s, already downloaded", download.target_file)
+        return
 
     async with session.get(download.url) as response:
         LOG.debug("HTTP %d %.3fs", response.status, time.time() - t0)
         if response.status == 200:
-            with download.target_file.open("wb") as f:
-                async for data in response.content.iter_chunked(131072):
-                    f.write(data)
-            # Get last modified time from the response
-            last_modified = parse_last_modified(response)
-            if last_modified:
-                os.utime(
-                    download.target_file,
-                    (last_modified.timestamp(), last_modified.timestamp()),
-                )
+            download.target_file.parent.mkdir(parents=True, exist_ok=True)
+            await _write_response_body_atomically(response, download.target_file)
+            _apply_last_modified(download.target_file, response)
 
             LOG.debug(
                 "Downloaded %s to %s in %.3fs",
@@ -363,7 +525,7 @@ class DownloadWorker:
     session: aiohttp.ClientSession
     queue: asyncio.Queue[CollectorFileEntry]
     naming_strategy: FileNamingStrategy
-    check_modified: bool
+    existing_file_policy: ExistingFilePolicy
     retry_helper: RetryHelper
     mirror_strategy: FileMirrorStrategy
 
@@ -373,14 +535,35 @@ class DownloadWorker:
         naming_strategy: FileNamingStrategy,
         session: aiohttp.ClientSession,
         queue: asyncio.Queue[CollectorFileEntry],
-        check_modified: bool = True,
+        check_modified: bool | None = None,
         mirror_strategy: FileMirrorStrategy | None = None,
+        existing_file_policy: ExistingFilePolicy | None = None,
     ):
         self.base_dir = base_dir
         self.session = session
         self.queue = queue
         self.naming_strategy = naming_strategy
-        self.check_modified = check_modified
+        if check_modified is not None:
+            if existing_file_policy is not None:
+                raise ValueError(
+                    "Cannot specify both check_modified and existing_file_policy"
+                )
+            warnings.warn(
+                "DownloadWorker(check_modified=...) is deprecated; use "
+                "existing_file_policy instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            existing_file_policy = "validate" if check_modified else "trust-existing"
+        self.existing_file_policy = existing_file_policy or "trust-existing"
+        if self.existing_file_policy not in {
+            "trust-existing",
+            "validate",
+            "redownload",
+        }:
+            raise ValueError(
+                f"Unknown existing file policy: {self.existing_file_policy}"
+            )
         self.retry_helper = RetryHelper()
         self.mirror_strategy = mirror_strategy or ArchiveRandomMirrorStrategy()
 
@@ -429,6 +612,120 @@ class DownloadWorker:
             retry_each_url_once=True,
         )
 
+    async def _download_from_response(
+        self,
+        entry: CollectorFileEntry,
+        target_file: Path,
+        response: aiohttp.ClientResponse,
+        request_url: str,
+        t0: float,
+    ) -> None:
+        await _write_response_body_atomically(response, target_file)
+        _apply_last_modified(target_file, response)
+        timestamp = _utc_now()
+        _write_metadata(
+            target_file,
+            _build_metadata(entry, request_url, response, timestamp),
+        )
+
+        LOG.debug(
+            "Downloaded %s to %s in %.3fs",
+            request_url,
+            target_file,
+            time.time() - t0,
+        )
+
+    async def _download_unconditionally(
+        self,
+        entry: CollectorFileEntry,
+        target_file: Path,
+        plan: MirrorAttemptPlan,
+        t0: float,
+    ) -> None:
+        async def download(url: str) -> None:
+            async with self.session.get(url) as response:
+                LOG.debug("HTTP %d %.3fs", response.status, time.time() - t0)
+                if response.status != 200:
+                    raise aiohttp.ClientResponseError(
+                        request_info=response.request_info,
+                        history=response.history,
+                        status=response.status,
+                        message=f"HTTP {response.status}",
+                        headers=response.headers,
+                    )
+                await self._download_from_response(
+                    entry, target_file, response, url, t0
+                )
+
+        await self.retry_helper.execute_with_urls(
+            download,
+            f"Download {entry.url}",
+            plan.urls,
+            retry_client_statuses=plan.retry_client_statuses,
+            retry_each_url_once=plan.retry_each_url_once,
+        )
+
+    async def _validate_existing_file(
+        self,
+        entry: CollectorFileEntry,
+        target_file: Path,
+        plan: MirrorAttemptPlan,
+        t0: float,
+    ) -> bool:
+        metadata = _read_metadata(target_file)
+        headers = _conditional_headers(metadata)
+        if not headers:
+            await self._download_unconditionally(entry, target_file, plan, t0)
+            return True
+
+        redownload_needed = False
+
+        async def conditional_get(url: str) -> bool:
+            nonlocal redownload_needed
+            async with self.session.get(url, headers=headers) as response:
+                LOG.debug("HTTP %d %.3fs", response.status, time.time() - t0)
+                if response.status == 304:
+                    if not _metadata_local_size_matches(target_file, metadata):
+                        redownload_needed = True
+                        return False
+
+                    _write_metadata(
+                        target_file,
+                        _refresh_metadata(
+                            metadata or {},
+                            entry,
+                            url,
+                            response,
+                            _utc_now(),
+                        ),
+                    )
+                    LOG.debug("Skipping %s, server returned 304", target_file)
+                    return True
+                if response.status == 200:
+                    await self._download_from_response(
+                        entry, target_file, response, url, t0
+                    )
+                    return True
+                raise aiohttp.ClientResponseError(
+                    request_info=response.request_info,
+                    history=response.history,
+                    status=response.status,
+                    message=f"HTTP {response.status}",
+                    headers=response.headers,
+                )
+
+        handled = await self.retry_helper.execute_with_urls(
+            conditional_get,
+            f"Validate {entry.url}",
+            plan.urls,
+            retry_client_statuses=plan.retry_client_statuses,
+            retry_each_url_once=plan.retry_each_url_once,
+        )
+        if redownload_needed:
+            await self._download_unconditionally(entry, target_file, plan, t0)
+            return True
+        return handled
+
     async def download_file(self, entry: CollectorFileEntry) -> None:
         target_file = self.naming_strategy.get_path(self.base_dir, entry)
 
@@ -446,111 +743,20 @@ class DownloadWorker:
 
         t0 = time.time()
         if target_file.is_file():
-            if not self.check_modified:
+            if self.existing_file_policy == "trust-existing":
                 LOG.debug(
-                    "Skipping %s w/o modification check, already downloaded",
+                    "Skipping %s, already downloaded",
                     target_file,
                 )
                 return
-
-            # check if file is modified with retry logic
-            plan = await get_plan()
-            head_kwargs = {"allow_redirects": True} if plan.head_allow_redirects else {}
-
-            async def check_modified(url: str):
-                async with self.session.head(url, **head_kwargs) as response:
-                    if response.status != 200:
-                        raise aiohttp.ClientResponseError(
-                            request_info=response.request_info,
-                            history=response.history,
-                            status=response.status,
-                            message=f"HTTP {response.status}",
-                            headers=response.headers,
-                        )
-                    return response.headers.get(
-                        "Content-Length", None
-                    ), parse_last_modified(response)
-
-            content_length, last_modified = await self.retry_helper.execute_with_urls(
-                check_modified,
-                f"HEAD {entry.url}",
-                plan.urls,
-                retry_client_statuses=plan.retry_client_statuses,
-                retry_each_url_once=plan.retry_each_url_once,
-            )
-
-            if content_length and last_modified:
-                # Stat the current file
-                stat = target_file.stat()
-                if (
-                    stat.st_size == int(content_length)
-                    and stat.st_mtime == last_modified.timestamp()
-                ):
-                    LOG.debug(
-                        "Skipping %s (%db at %s), already downloaded",
-                        target_file,
-                        stat.st_size,
-                        last_modified,
-                    )
-                    return
+            if self.existing_file_policy == "validate":
+                plan = await get_plan()
+                await self._validate_existing_file(entry, target_file, plan, t0)
+                return
 
         # Download file with retry logic
         plan = await get_plan()
-
-        async def download(url: str):
-            async with self.session.get(url) as response:
-                LOG.debug("HTTP %d %.3fs", response.status, time.time() - t0)
-                if response.status == 200:
-                    # Download to temporary file first
-                    tmp_file: Path | None = None
-                    try:
-                        with tempfile.NamedTemporaryFile(
-                            dir=target_file.parent, suffix=".tmp", delete=False
-                        ) as f:
-                            tmp_file = Path(f.name)
-                            async for data in response.content.iter_chunked(131072):
-                                f.write(data)
-                            f.flush()
-
-                        tmp_file.replace(target_file)
-                        tmp_file = None
-                    finally:
-                        if tmp_file is not None:
-                            tmp_file.unlink(missing_ok=True)
-
-                    # Get last modified time from the response
-                    last_modified = parse_last_modified(response)
-                    if last_modified:
-                        os.utime(
-                            target_file,
-                            (
-                                last_modified.timestamp(),
-                                last_modified.timestamp(),
-                            ),
-                        )
-
-                    LOG.debug(
-                        "Downloaded %s to %s in %.3fs",
-                        url,
-                        target_file,
-                        time.time() - t0,
-                    )
-                else:
-                    raise aiohttp.ClientResponseError(
-                        request_info=response.request_info,
-                        history=response.history,
-                        status=response.status,
-                        message=f"HTTP {response.status}",
-                        headers=response.headers,
-                    )
-
-        await self.retry_helper.execute_with_urls(
-            download,
-            f"Download {entry.url}",
-            plan.urls,
-            retry_client_statuses=plan.retry_client_statuses,
-            retry_each_url_once=plan.retry_each_url_once,
-        )
+        await self._download_unconditionally(entry, target_file, plan, t0)
 
     async def run(self) -> int:
         processed = 0

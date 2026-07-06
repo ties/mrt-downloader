@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+ExistingFilePolicy = Literal["trust-existing", "validate", "redownload"]
+
 MRT_FILENAME_PATTERN = re.compile(
     r"^(?:bview|view|updates|rib)\.(\d{8}\.\d{4})\.(?:gz|bz2)$"
 )
