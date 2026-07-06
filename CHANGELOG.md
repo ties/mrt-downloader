@@ -1,15 +1,11 @@
-## v0.18.0
-
-  * Try OSDF `Links` in order of preference and finally try routeviews primary.
-  * Prefer OSDF for routeviews data
-  * Drop default parallelism to four connections
-
 ## v0.17.0
 
+  * Try OSDF `Links` in order of preference and finally try routeviews primary.
+  * Prefer OSDF for routeviews data. Choice can be set with `--routeviews-mirror-strategy=osdf-preferred`.
+    The heuristic will do [retries-1] retries on different OSDF `Links`and one
+    routeviews archive by default.
+  * Drop default parallelism to four connections
   * Mirror selection is a selectable strategy now
-  * Make RouteViews OSDF downloads opt-in with
-    `--routeviews-mirror-strategy=osdf-preferred`; the default now rotates
-    randomly between the regular RouteViews archive mirrors.
 
 ## v0.0.16
 

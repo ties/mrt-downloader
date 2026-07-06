@@ -5,9 +5,14 @@
 Download MRT update or bview files, from RIPE RIS, routeviews, or both.
 The CLI uses a local cache for the index pages from the route collector
 projects.
-RouteViews downloads use the regular archive mirrors by default. To prefer
-OSDF for RouteViews file downloads, add
-`--routeviews-mirror-strategy=osdf-preferred`.
+RouteViews downloads prefer OSDF by default. To use the regular RouteViews
+archive mirrors for file downloads, add
+`--routeviews-mirror-strategy=archive-random`.
+Existing target files are trusted by default. Use
+`--existing-file-policy=validate` to revalidate existing files with conditional
+HTTP requests, or `--existing-file-policy=redownload` to always replace them.
+RouteViews validation requires `--routeviews-mirror-strategy=archive-random`,
+because conditional requests do not work reliably through OSDF caches.
 
 ```
 # install the tool using pipx
@@ -77,6 +82,7 @@ async def main() -> None:
         project=frozenset({"routeviews"}),
         collectors=["route-views.bknix"],
         routeviews_mirror_strategy="osdf-preferred",
+        existing_file_policy="trust-existing",
     )
 
 
@@ -175,4 +181,3 @@ rrc10-updates.20250116.1605.gz  rrc19-updates.20250116.0815.gz  rrc26-updates.20
 rrc10-updates.20250116.1610.gz  rrc19-updates.20250116.0820.gz  rrc26-updates.20250117.0000.gz
 [root@rocky-32gb-fsn1-1 ~]#
 ```
-
