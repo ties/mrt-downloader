@@ -34,8 +34,16 @@ async def test_mrt_download(tmp_path: pathlib.Path) -> None:
     assert len(files) > 24
     print(list(tmp_path.glob("*update*")))
 
-    update_files = set(p.name for p in tmp_path.glob("*updates*"))
-    bview_files = set(p.name for p in tmp_path.glob("*bview*"))
+    update_files = set(
+        p.name
+        for p in tmp_path.glob("*updates*")
+        if ".download-metadata.json" not in p.name
+    )
+    bview_files = set(
+        p.name
+        for p in tmp_path.glob("*bview*")
+        if ".download-metadata.json" not in p.name
+    )
 
     assert len(bview_files) == 2
     assert len(update_files) == 26
