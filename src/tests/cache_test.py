@@ -436,6 +436,24 @@ async def test_store_and_retrieve_collectors():
 
 
 @pytest.mark.asyncio
+async def test_store_and_retrieve_routeviews_activity_cutoff():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        collector = CollectorInfo(
+            name="route-views.jinx",
+            project="routeviews",
+            base_url="https://archive.routeviews.org/route-views.jinx/bgpdata/",
+            installed=datetime.datetime(2017, 1, 1, tzinfo=datetime.timezone.utc),
+            removed=datetime.datetime(2019, 9, 15, 2, 15, tzinfo=datetime.timezone.utc),
+        )
+
+        await store_collectors("routeviews", [collector], db_path)
+
+        cached = await get_cached_collectors("routeviews", db_path=db_path)
+        assert cached == [collector]
+
+
+@pytest.mark.asyncio
 async def test_collector_cache_miss():
     """Test that a collector cache miss returns None."""
     with tempfile.TemporaryDirectory() as tmpdir:

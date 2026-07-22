@@ -34,7 +34,7 @@ def ris_collectors() -> list[CollectorInfo]:
         return parse_ripe_ris_collectors(data)
 
 
-def test_parse_routeviews_collectors_keeps_active_collectors_unbounded(
+def test_parse_routeviews_collectors_adds_recent_activity_grace(
     routeviews_collectors: list[CollectorInfo],
 ) -> None:
     bknix = [c for c in routeviews_collectors if c.name == "route-views.bknix"][0]
@@ -44,7 +44,35 @@ def test_parse_routeviews_collectors_keeps_active_collectors_unbounded(
     assert bknix.installed == datetime.datetime(
         2019, 10, 28, 23, 15, tzinfo=datetime.UTC
     )
-    assert bknix.removed is None
+    assert bknix.removed == datetime.datetime(2026, 7, 10, 12, 45, tzinfo=datetime.UTC)
+
+
+def test_parse_routeviews_collectors_skips_collector_without_latest_dump(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    metadata = {
+        "data": {
+            "collectors": {
+                "route-views.example": {
+                    "baseURL": "https://archive.routeviews.org/route-views.example/bgpdata/",
+                    "dataTypes": {
+                        "ribs": {
+                            "oldestDumpTimeISO8601": "2019-01-01T00:00:00Z",
+                        }
+                    },
+                }
+            }
+        }
+    }
+
+    with caplog.at_level(logging.WARNING):
+        collectors = parse_routeviews_collectors(metadata)
+
+    assert collectors == []
+    assert (
+        "Skipping RouteViews collector route-views.example without latest dump time"
+        in caplog.text
+    )
 
 
 BKNIX_COLLECTOR = CollectorInfo(
@@ -130,7 +158,7 @@ def test_index_files_for_routeviews_includes_first_partial_month(
     ]
 
 
-def test_index_files_for_routeviews_includes_month_after_latest_dump_metadata(
+def test_index_files_for_routeviews_includes_only_month_within_activity_grace(
     routeviews_collectors: list[CollectorInfo],
 ) -> None:
     bknix = [c for c in routeviews_collectors if c.name == "route-views.bknix"][0]
@@ -138,13 +166,47 @@ def test_index_files_for_routeviews_includes_month_after_latest_dump_metadata(
     index_files = index_files_for_collector(
         bknix,
         start_time=datetime.datetime(2026, 7, 1, tzinfo=datetime.UTC),
-        end_time=datetime.datetime(2026, 7, 1, tzinfo=datetime.UTC),
+        end_time=datetime.datetime(2026, 8, 1, tzinfo=datetime.UTC),
     )
 
     assert [entry.url for entry in index_files] == [
         "https://archive.routeviews.org/route-views.bknix/bgpdata/2026.07/RIBS/",
         "https://archive.routeviews.org/route-views.bknix/bgpdata/2026.07/UPDATES/",
     ]
+
+
+def test_index_files_for_routeviews_excludes_long_inactive_collector() -> None:
+    metadata = {
+        "data": {
+            "collectors": {
+                "route-views.jinx": {
+                    "baseURL": "https://archive.routeviews.org/route-views.jinx/bgpdata/",
+                    "dataTypes": {
+                        "ribs": {
+                            "oldestDumpTimeISO8601": "2017-01-01T00:00:00Z",
+                            "latestDumpTimeISO8601": "2019-08-15T02:15:00Z",
+                        },
+                        "updates": {
+                            "oldestDumpTimeISO8601": "2017-01-01T00:15:00Z",
+                            "latestDumpTimeISO8601": "2019-08-15T02:00:00Z",
+                        },
+                    },
+                }
+            }
+        }
+    }
+    collector = parse_routeviews_collectors(metadata)[0]
+
+    index_files = index_files_for_collector(
+        collector,
+        start_time=datetime.datetime(2026, 7, 1, tzinfo=datetime.UTC),
+        end_time=datetime.datetime(2026, 7, 31, tzinfo=datetime.UTC),
+    )
+
+    assert collector.removed == datetime.datetime(
+        2019, 9, 15, 2, 15, tzinfo=datetime.UTC
+    )
+    assert index_files == []
 
 
 def test_index_files_for_ris(ris_collectors: list[CollectorInfo]) -> None:

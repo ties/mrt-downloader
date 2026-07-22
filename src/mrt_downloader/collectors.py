@@ -10,6 +10,8 @@ from mrt_downloader.models import CollectorInfo
 
 LOG = logging.getLogger(__name__)
 
+ROUTEVIEWS_RECENT_ACTIVITY_GRACE = datetime.timedelta(days=31)
+
 
 def parse_ripe_ris_collectors(obj: dict[str, dict[str, Any]]) -> list[CollectorInfo]:
     """Parse RIPEstat RIS collector data"""
@@ -70,9 +72,19 @@ def parse_routeviews_collectors(obj: dict[str, Any]) -> list[CollectorInfo]:
             for data_type in data_types.values()
             if data_type.get("oldestDumpTimeISO8601")
         ]
+        latest_dump_times = [
+            datetime.datetime.fromisoformat(data_type["latestDumpTimeISO8601"])
+            for data_type in data_types.values()
+            if data_type.get("latestDumpTimeISO8601")
+        ]
         if not oldest_dump_times:
             LOG.warning(
                 "Skipping RouteViews collector %s without oldest dump time", name
+            )
+            continue
+        if not latest_dump_times:
+            LOG.warning(
+                "Skipping RouteViews collector %s without latest dump time", name
             )
             continue
 
@@ -82,7 +94,7 @@ def parse_routeviews_collectors(obj: dict[str, Any]) -> list[CollectorInfo]:
                 project="routeviews",
                 base_url=collector["baseURL"],
                 installed=min(oldest_dump_times),
-                removed=None,
+                removed=max(latest_dump_times) + ROUTEVIEWS_RECENT_ACTIVITY_GRACE,
             )
         )
 
