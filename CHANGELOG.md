@@ -1,3 +1,8 @@
+## v0.17.1
+
+  * Use the latest dump time from routeviews API as cutoff (with a 31 day grace
+    window).
+
 ## v0.17.0
 
   * Make verification behaviour (re-download or not) configurable, and store
