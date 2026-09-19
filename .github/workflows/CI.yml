@@ -28,7 +28,7 @@ jobs:
           - runner: ubuntu-24.04
             target: aarch64
         python:
-          - 3.11
+          - 3.12
           - 3.14
     steps:
       - uses: actions/checkout@v4
