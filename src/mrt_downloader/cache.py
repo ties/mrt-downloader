@@ -4,7 +4,8 @@ import asyncio
 import datetime
 import logging
 import sqlite3
-from collections.abc import Awaitable, Callable
+import urllib.parse
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, TypeVar
@@ -12,6 +13,7 @@ from typing import Optional, TypeVar
 import aiosqlite
 
 from mrt_downloader.models import CollectorFileEntry, CollectorInfo
+from mrt_downloader.url_utils import is_absolute_http_url
 
 LOG = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -28,9 +30,125 @@ SQLITE_CONNECT_TIMEOUT_SECONDS = 30.0
 SQLITE_BUSY_TIMEOUT_MS = 30_000
 SQLITE_LOCK_RETRIES = 5
 SQLITE_LOCK_RETRY_INITIAL_DELAY_SECONDS = 0.25
-CURRENT_CACHE_SCHEMA_VERSION = 2
+
+# Version 6 supersedes all schema versions previously used in releases or branches.
+CURRENT_CACHE_SCHEMA_VERSION = 6
+
+# Multi-year, all-collector runs can contain thousands of index URLs, so keep
+# each IN clause well below SQLITE_MAX_VARIABLE_NUMBER.
+SQL_PARAM_CHUNK = 500
 
 _CACHE_WRITE_LOCKS: dict[tuple[int, str], asyncio.Lock] = {}
+
+_FILE_TYPE_TO_CODE: dict[str, int] = {"rib": 1, "update": 2}
+_FILE_TYPE_BY_CODE: dict[int, str] = {
+    code: name for name, code in _FILE_TYPE_TO_CODE.items()
+}
+
+_SCHEMA_DDL: tuple[str, ...] = (
+    # cached_at/list_position are set only for collectors in the most recent
+    # project listing; collectors known only through an index leave them NULL.
+    """
+    CREATE TABLE collector (
+        id            INTEGER PRIMARY KEY,
+        project       TEXT NOT NULL,
+        name          TEXT NOT NULL,
+        base_url      TEXT NOT NULL,
+        installed     TEXT NOT NULL,
+        removed       TEXT,
+        cached_at     INTEGER,
+        list_position INTEGER,
+        UNIQUE (project, name)
+    )
+    """,
+    """
+    CREATE TABLE index_cache (
+        id             INTEGER PRIMARY KEY,
+        url            TEXT NOT NULL UNIQUE,
+        downloaded_at  INTEGER NOT NULL,
+        month_end_date TEXT NOT NULL
+    )
+    """,
+    # Store only the part of the URL that cannot be derived from the index URL.
+    # The composite primary key is also the only lookup index, so WITHOUT ROWID
+    # avoids both a per-row rowid and a redundant secondary index.
+    # collector_id is not indexed: collector deletion is rare, while an index
+    # would add steady-state storage for every file row.
+    """
+    CREATE TABLE file_cache (
+        index_id     INTEGER NOT NULL REFERENCES index_cache(id) ON DELETE CASCADE,
+        collector_id INTEGER NOT NULL REFERENCES collector(id) ON DELETE CASCADE,
+        filename     TEXT NOT NULL,
+        url_suffix   TEXT,
+        file_type    INTEGER,
+        PRIMARY KEY (index_id, filename)
+    ) WITHOUT ROWID
+    """,
+)
+
+
+async def _drop_all_objects(db) -> bool:
+    """Empty the database of everything this project may have put there.
+
+    Drop every user table and view rather than relying on a version-specific list.
+
+    PRAGMA foreign_keys cannot be changed inside a transaction, so defer the
+    checks instead. By commit time nothing is left to reference anything.
+    """
+    await db.execute("PRAGMA defer_foreign_keys = ON")
+    async with db.execute(
+        """
+        SELECT type, name FROM sqlite_master
+        WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
+        """
+    ) as cursor:
+        objects = await cursor.fetchall()
+
+    for object_type, name in objects:
+        await db.execute(f'DROP {object_type.upper()} IF EXISTS "{name}"')
+
+    return bool(objects)
+
+
+def _chunked(values: Sequence[T], size: int = SQL_PARAM_CHUNK) -> Iterator[Sequence[T]]:
+    for start in range(0, len(values), size):
+        yield values[start : start + size]
+
+
+def _encode_file_type(file_type: Optional[str]) -> Optional[int]:
+    if file_type is None:
+        return None
+
+    code = _FILE_TYPE_TO_CODE.get(file_type)
+    if code is None:
+        LOG.warning("Unknown file type %r, caching it as unknown", file_type)
+    return code
+
+
+def _url_suffix(index_url: str, entry: CollectorFileEntry) -> Optional[str]:
+    """Reduce a file URL to the part that cannot be derived from the index URL.
+
+    A derived URL needs no suffix. Subdirectory links retain their relative tail,
+    while URLs outside the index are stored in full.
+    """
+    if entry.url.startswith(index_url):
+        tail = entry.url[len(index_url) :]
+        return None if tail == entry.filename else tail
+
+    if is_absolute_http_url(entry.url):
+        return entry.url
+
+    return urllib.parse.urljoin(index_url, entry.url)
+
+
+def _file_url(index_url: str, filename: str, url_suffix: Optional[str]) -> str:
+    if url_suffix is None:
+        return index_url + filename
+
+    if is_absolute_http_url(url_suffix):
+        return url_suffix
+
+    return index_url + url_suffix
 
 
 def get_cache_db_path() -> Path:
@@ -105,16 +223,23 @@ async def _connect_cache_db(db_path: Path):
     ) as db:
         await db.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
         await db.execute("PRAGMA foreign_keys = ON")
+        # synchronous is connection-local; NORMAL is sufficient for a cache
+        # that can be rebuilt from its upstream sources.
+        await db.execute("PRAGMA synchronous = NORMAL")
         yield db
 
 
-async def init_cache_db(db_path: Optional[Path] = None) -> None:
-    """Initialize the cache database and create tables if they don't exist.
+async def _read_user_version(db) -> int:
+    async with db.execute("PRAGMA user_version") as cursor:
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
 
-    Creates three tables:
-    - collector_cache: Stores collector information (cached for 24h)
-    - index_cache: Tracks which indexes have been downloaded and when
-    - file_cache: Stores the parsed CollectorFileEntry objects for each index
+
+async def init_cache_db(db_path: Optional[Path] = None) -> None:
+    """Make sure the cache database holds the current schema.
+
+    Rebuild mismatched schemas rather than migrating cached data. The
+    already-current case requires only a version read.
 
     Args:
         db_path: Path to the database file. If None, uses default cache path.
@@ -122,88 +247,134 @@ async def init_cache_db(db_path: Optional[Path] = None) -> None:
     if db_path is None:
         db_path = get_cache_db_path()
 
+    # Safe outside the lock because the version is rechecked in the transaction.
+    try:
+        async with _connect_cache_db(db_path) as db:
+            if await _read_user_version(db) == CURRENT_CACHE_SCHEMA_VERSION:
+                return
+    except sqlite3.DatabaseError as exc:
+        LOG.debug("Could not read the cache schema version: %s", exc)
+
     async def initialize() -> None:
         async with _connect_cache_db(db_path) as db:
             await db.execute("PRAGMA journal_mode = WAL")
-            await db.execute("PRAGMA synchronous = NORMAL")
-            async with db.execute("PRAGMA user_version") as cursor:
-                row = await cursor.fetchone()
-                cache_version = int(row[0]) if row else 0
 
-            # Table for storing collectors (cached for 24h)
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS collector_cache (
-                    project TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    base_url TEXT NOT NULL,
-                    installed TEXT NOT NULL,
-                    removed TEXT,
-                    cached_at INTEGER NOT NULL,
-                    PRIMARY KEY (project, name)
-                )
-            """)
+            await db.execute("BEGIN IMMEDIATE")
+            try:
+                # Re-read inside the transaction: the asyncio write lock is
+                # per-process, so another process may have rebuilt the database
+                # between the fast-path read and here.
+                cache_version = await _read_user_version(db)
+                if cache_version == CURRENT_CACHE_SCHEMA_VERSION:
+                    await db.rollback()
+                    return
 
-            # Table for tracking processed indexes
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS index_cache (
-                    url TEXT PRIMARY KEY,
-                    downloaded_at INTEGER NOT NULL,
-                    month_end_date TEXT NOT NULL
-                )
-            """)
+                had_objects = await _drop_all_objects(db)
+                discarded = cache_version != 0 or had_objects
+                if discarded:
+                    LOG.info(
+                        "Cache schema is version %d rather than %d; discarding the "
+                        "cached indexes and starting from an empty cache",
+                        cache_version,
+                        CURRENT_CACHE_SCHEMA_VERSION,
+                    )
 
-            # Table for storing parsed file entries
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS file_cache (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    index_url TEXT NOT NULL,
-                    collector_name TEXT NOT NULL,
-                    collector_project TEXT NOT NULL,
-                    collector_base_url TEXT NOT NULL,
-                    collector_installed TEXT NOT NULL,
-                    collector_removed TEXT,
-                    filename TEXT NOT NULL,
-                    file_url TEXT NOT NULL,
-                    file_type TEXT,
-                    FOREIGN KEY (index_url) REFERENCES index_cache(url) ON DELETE CASCADE
-                )
-            """)
+                for ddl in _SCHEMA_DDL:
+                    await db.execute(ddl)
 
-            # Index for faster lookups
-            await db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_file_cache_index_url
-                ON file_cache(index_url)
-            """)
-
-            if cache_version < 2 <= CURRENT_CACHE_SCHEMA_VERSION:
-                await db.execute(
-                    "DELETE FROM collector_cache WHERE project = 'routeviews'"
-                )
-                await db.execute(
-                    """
-                    DELETE FROM index_cache
-                    WHERE url LIKE 'https://archive.routeviews.org/%'
-                       OR url LIKE 'https://archive2.routeviews.org/%'
-                    """
-                )
-                LOG.info(
-                    "Invalidated RouteViews cache entries while migrating cache "
-                    "from version %d to %d",
-                    cache_version,
-                    CURRENT_CACHE_SCHEMA_VERSION,
-                )
-
-            if cache_version < CURRENT_CACHE_SCHEMA_VERSION:
                 await db.execute(
                     f"PRAGMA user_version = {CURRENT_CACHE_SCHEMA_VERSION}"
                 )
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
 
-            await db.commit()
+            if discarded:
+                # Dropping the tables only moves their pages onto the freelist;
+                # without this the file keeps its old size. Best-effort: a large
+                # file is a much smaller problem than a failed run.
+                try:
+                    await db.execute("VACUUM")
+                except Exception as exc:
+                    LOG.debug("Could not compact the cache database: %s", exc)
 
     async with _get_write_lock(db_path):
         await _retry_on_sqlite_lock("Initialize cache database", initialize)
 
     LOG.debug("Using cache database at %s", db_path)
+
+
+async def _load_collectors(db) -> dict[int, CollectorInfo]:
+    """Load collectors once so file entries can share their instances."""
+    collectors: dict[int, CollectorInfo] = {}
+    async with db.execute(
+        "SELECT id, project, name, base_url, installed, removed FROM collector"
+    ) as cursor:
+        async for (
+            collector_id,
+            project,
+            name,
+            base_url,
+            installed,
+            removed,
+        ) in cursor:
+            collectors[collector_id] = CollectorInfo(
+                name=name,
+                project=project,
+                base_url=base_url,
+                installed=datetime.datetime.fromisoformat(installed),
+                removed=datetime.datetime.fromisoformat(removed) if removed else None,
+            )
+    return collectors
+
+
+async def _intern_collector(db, collector: CollectorInfo) -> int:
+    """Return the id of a collector row, inserting it when it is new.
+
+    Leaves cached_at/list_position alone: membership of a project listing is
+    store_collectors' business, and a collector that was only ever seen through
+    an index must not be served as a cached listing.
+    """
+    async with db.execute(
+        """
+        INSERT INTO collector (project, name, base_url, installed, removed)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(project, name) DO UPDATE SET
+            base_url  = excluded.base_url,
+            installed = excluded.installed,
+            removed   = excluded.removed
+        RETURNING id
+        """,
+        (
+            collector.project,
+            collector.name,
+            collector.base_url,
+            collector.installed.isoformat(),
+            collector.removed.isoformat() if collector.removed else None,
+        ),
+    ) as cursor:
+        return (await cursor.fetchone())[0]
+
+
+async def _upsert_index(db, url: str, downloaded_at: int, month_end: str) -> int:
+    """Return the id of an index row, inserting or refreshing it as needed.
+
+    Deliberately an upsert rather than INSERT OR REPLACE: a replace deletes the
+    conflicting row, which would cascade the file rows away and hand out a new id.
+    """
+    async with db.execute(
+        """
+        INSERT INTO index_cache (url, downloaded_at, month_end_date)
+        VALUES (?, ?, ?)
+        ON CONFLICT(url) DO UPDATE SET
+            downloaded_at  = excluded.downloaded_at,
+            month_end_date = excluded.month_end_date
+        RETURNING id
+        """,
+        (url, downloaded_at, month_end),
+    ) as cursor:
+        return (await cursor.fetchone())[0]
 
 
 def should_refresh_index(month_end_date: datetime.datetime) -> bool:
@@ -293,14 +464,14 @@ async def get_cached_index(
             async with _connect_cache_db(db_path) as db:
                 # Check if the index is in cache
                 async with db.execute(
-                    "SELECT downloaded_at FROM index_cache WHERE url = ?", (url,)
+                    "SELECT id, downloaded_at FROM index_cache WHERE url = ?", (url,)
                 ) as cursor:
                     row = await cursor.fetchone()
                     if not row:
                         LOG.debug(f"No cache entry found for {url}")
                         return None
 
-                    downloaded_at = row[0]
+                    index_id, downloaded_at = row
                     downloaded_at_str = datetime.datetime.fromtimestamp(
                         downloaded_at, tz=datetime.timezone.utc
                     ).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -310,58 +481,36 @@ async def get_cached_index(
                         downloaded_at_str,
                     )
 
+                collectors = await _load_collectors(db)
+
                 # Retrieve all file entries for this index
                 async with db.execute(
                     """
-                    SELECT collector_name, collector_project, collector_base_url,
-                           collector_installed, collector_removed,
-                           filename, file_url, file_type
+                    SELECT collector_id, filename, url_suffix, file_type
                     FROM file_cache
-                    WHERE index_url = ?
+                    WHERE index_id = ?
                     """,
-                    (url,),
+                    (index_id,),
                 ) as cursor:
-                    rows = await cursor.fetchall()
-
-                    file_entries = []
-                    for row in rows:
-                        (
-                            collector_name,
-                            collector_project,
-                            collector_base_url,
-                            collector_installed,
-                            collector_removed,
-                            filename,
-                            file_url,
-                            file_type,
-                        ) = row
-
-                        # Reconstruct CollectorInfo
-                        collector = CollectorInfo(
-                            name=collector_name,
-                            project=collector_project,
-                            base_url=collector_base_url,
-                            installed=datetime.datetime.fromisoformat(
-                                collector_installed
-                            ),
-                            removed=datetime.datetime.fromisoformat(collector_removed)
-                            if collector_removed
-                            else None,
-                        )
-
-                        # Reconstruct CollectorFileEntry
-                        file_entry = CollectorFileEntry(
-                            collector=collector,
+                    file_entries = [
+                        CollectorFileEntry(
+                            collector=collectors[collector_id],
                             filename=filename,
-                            url=file_url,
-                            file_type=file_type,
+                            url=_file_url(url, filename, url_suffix),
+                            file_type=_FILE_TYPE_BY_CODE.get(file_type),
                         )
-                        file_entries.append(file_entry)
+                        async for (
+                            collector_id,
+                            filename,
+                            url_suffix,
+                            file_type,
+                        ) in cursor
+                    ]
 
-                    LOG.debug(
-                        f"Retrieved {len(file_entries)} file entries from cache for {url}"
-                    )
-                    return file_entries
+                LOG.debug(
+                    f"Retrieved {len(file_entries)} file entries from cache for {url}"
+                )
+                return file_entries
 
         return await _retry_on_sqlite_lock(f"Look up index cache for {url}", lookup)
     except Exception as e:
@@ -380,43 +529,47 @@ async def _store_index_once(
 
     now = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
     month_end_str = month_end_date.isoformat()
-    file_rows = [
-        (
-            url,
-            entry.collector.name,
-            entry.collector.project,
-            entry.collector.base_url,
-            entry.collector.installed.isoformat(),
-            entry.collector.removed.isoformat() if entry.collector.removed else None,
-            entry.filename,
-            entry.url,
-            entry.file_type,
+
+    # CollectorInfo is unhashable, so deduplicate by its database identity.
+    collectors: dict[tuple[str, str], CollectorInfo] = {}
+    for entry in file_entries:
+        collectors.setdefault(
+            (entry.collector.project, entry.collector.name), entry.collector
         )
-        for entry in file_entries
-    ]
 
     async with _get_write_lock(db_path):
         async with _connect_cache_db(db_path) as db:
             await db.execute("BEGIN IMMEDIATE")
             try:
-                # Store index metadata.
+                collector_ids = {
+                    key: await _intern_collector(db, collector)
+                    for key, collector in collectors.items()
+                }
+                index_id = await _upsert_index(db, url, now, month_end_str)
+
                 await db.execute(
-                    """
-                    INSERT OR REPLACE INTO index_cache (url, downloaded_at, month_end_date)
-                    VALUES (?, ?, ?)
-                    """,
-                    (url, now, month_end_str),
+                    "DELETE FROM file_cache WHERE index_id = ?", (index_id,)
                 )
-                await db.execute("DELETE FROM file_cache WHERE index_url = ?", (url,))
+                # INSERT OR REPLACE so a listing that repeats a link collapses it
+                # rather than failing the whole transaction on the primary key.
                 await db.executemany(
                     """
-                    INSERT INTO file_cache (
-                        index_url, collector_name, collector_project, collector_base_url,
-                        collector_installed, collector_removed,
-                        filename, file_url, file_type
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO file_cache (
+                        index_id, collector_id, filename, url_suffix, file_type
+                    ) VALUES (?, ?, ?, ?, ?)
                     """,
-                    file_rows,
+                    [
+                        (
+                            index_id,
+                            collector_ids[
+                                (entry.collector.project, entry.collector.name)
+                            ],
+                            entry.filename,
+                            _url_suffix(url, entry),
+                            _encode_file_type(entry.file_type),
+                        )
+                        for entry in file_entries
+                    ],
                 )
                 await db.commit()
             except Exception:
@@ -495,79 +648,63 @@ async def get_cached_indexes_batch(
 
         async def lookup() -> dict[str, list[CollectorFileEntry]]:
             async with _connect_cache_db(db_path) as db:
-                # Build parameterized query for all URLs
-                placeholders = ",".join("?" * len(valid_urls))
-
                 # Query 1: Get index metadata for all URLs
-                query = (
-                    f"SELECT url, downloaded_at FROM index_cache "
-                    f"WHERE url IN ({placeholders})"
-                )
-                cached_urls = set()
-                downloaded_times = {}
+                index_urls: dict[int, str] = {}
+                downloaded_times: dict[str, int] = {}
 
-                async with db.execute(query, valid_urls) as cursor:
-                    rows = await cursor.fetchall()
-                    for url, downloaded_at in rows:
-                        cached_urls.add(url)
-                        downloaded_times[url] = downloaded_at
+                for chunk in _chunked(valid_urls):
+                    placeholders = ",".join("?" * len(chunk))
+                    async with db.execute(
+                        f"SELECT id, url, downloaded_at FROM index_cache "
+                        f"WHERE url IN ({placeholders})",
+                        chunk,
+                    ) as cursor:
+                        async for index_id, index_url, downloaded_at in cursor:
+                            index_urls[index_id] = index_url
+                            downloaded_times[index_url] = downloaded_at
 
-                if not cached_urls:
+                if not index_urls:
                     LOG.debug(f"No cached indexes found for {len(valid_urls)} URLs")
                     return {}
 
                 LOG.info(
-                    f"Found {len(cached_urls)} cached indexes out of {len(valid_urls)} requested"
+                    f"Found {len(index_urls)} cached indexes out of {len(valid_urls)} requested"
                 )
 
-                # Query 2: Get all file entries for cached URLs in one query
-                placeholders = ",".join("?" * len(cached_urls))
-                query = f"""
-                    SELECT index_url, collector_name, collector_project, collector_base_url,
-                           collector_installed, collector_removed,
-                           filename, file_url, file_type
-                    FROM file_cache
-                    WHERE index_url IN ({placeholders})
-                """
+                # Materialise collectors once for all returned file entries.
+                collectors = await _load_collectors(db)
 
                 # Group file entries by URL
-                result = {url: [] for url in cached_urls}
+                result: dict[str, list[CollectorFileEntry]] = {
+                    index_url: [] for index_url in index_urls.values()
+                }
 
-                async with db.execute(query, list(cached_urls)) as cursor:
-                    async for row in cursor:
-                        (
-                            index_url,
-                            collector_name,
-                            collector_project,
-                            collector_base_url,
-                            collector_installed,
-                            collector_removed,
+                for chunk in _chunked(list(index_urls)):
+                    placeholders = ",".join("?" * len(chunk))
+                    async with db.execute(
+                        f"""
+                        SELECT index_id, collector_id, filename, url_suffix, file_type
+                        FROM file_cache
+                        WHERE index_id IN ({placeholders})
+                        """,
+                        chunk,
+                    ) as cursor:
+                        async for (
+                            index_id,
+                            collector_id,
                             filename,
-                            file_url,
+                            url_suffix,
                             file_type,
-                        ) = row
-
-                        # Reconstruct CollectorInfo
-                        collector = CollectorInfo(
-                            name=collector_name,
-                            project=collector_project,
-                            base_url=collector_base_url,
-                            installed=datetime.datetime.fromisoformat(
-                                collector_installed
-                            ),
-                            removed=datetime.datetime.fromisoformat(collector_removed)
-                            if collector_removed
-                            else None,
-                        )
-
-                        # Reconstruct CollectorFileEntry
-                        file_entry = CollectorFileEntry(
-                            collector=collector,
-                            filename=filename,
-                            url=file_url,
-                            file_type=file_type,
-                        )
-                        result[index_url].append(file_entry)
+                        ) in cursor:
+                            index_url = index_urls[index_id]
+                            result[index_url].append(
+                                CollectorFileEntry(
+                                    collector=collectors[collector_id],
+                                    filename=filename,
+                                    url=_file_url(index_url, filename, url_suffix),
+                                    file_type=_FILE_TYPE_BY_CODE.get(file_type),
+                                )
+                            )
 
                 # Log summary
                 total_files = sum(len(entries) for entries in result.values())
@@ -637,9 +774,14 @@ async def get_cached_collectors(
 
         async def lookup() -> Optional[list[CollectorInfo]]:
             async with _connect_cache_db(db_path) as db:
-                # Get all collectors for this project and check if any are stale
+                # Exclude collectors known only through an index.
                 async with db.execute(
-                    "SELECT name, base_url, installed, removed, cached_at FROM collector_cache WHERE project = ?",
+                    """
+                    SELECT name, base_url, installed, removed, cached_at
+                    FROM collector
+                    WHERE project = ? AND cached_at IS NOT NULL
+                    ORDER BY list_position
+                    """,
                     (project,),
                 ) as cursor:
                     rows = await cursor.fetchall()
@@ -697,6 +839,15 @@ async def get_cached_collectors(
 async def _store_collectors_once(
     project: str, collectors: list[CollectorInfo], db_path: Path
 ) -> None:
+    if not collectors:
+        # Treat an empty response as an upstream failure, not as every collector
+        # being retired; the latter would cascade-delete their cached file entries.
+        LOG.warning(
+            "Not caching an empty collector list for %s; keeping the previous one",
+            project,
+        )
+        return
+
     await init_cache_db(db_path)
 
     now = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
@@ -708,23 +859,46 @@ async def _store_collectors_once(
             collector.installed.isoformat(),
             collector.removed.isoformat() if collector.removed else None,
             now,
+            position,
         )
-        for collector in collectors
+        for position, collector in enumerate(collectors)
     ]
 
     async with _get_write_lock(db_path):
         async with _connect_cache_db(db_path) as db:
             await db.execute("BEGIN IMMEDIATE")
             try:
+                # Retire the previous listing, then re-stamp whatever is still
+                # in it. Marking first rather than comparing timestamps keeps
+                # this correct when two refreshes land in the same second.
                 await db.execute(
-                    "DELETE FROM collector_cache WHERE project = ?", (project,)
+                    """
+                    UPDATE collector
+                    SET cached_at = NULL, list_position = NULL
+                    WHERE project = ?
+                    """,
+                    (project,),
                 )
                 await db.executemany(
                     """
-                    INSERT INTO collector_cache (project, name, base_url, installed, removed, cached_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO collector (
+                        project, name, base_url, installed, removed,
+                        cached_at, list_position
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(project, name) DO UPDATE SET
+                        base_url      = excluded.base_url,
+                        installed     = excluded.installed,
+                        removed       = excluded.removed,
+                        cached_at     = excluded.cached_at,
+                        list_position = excluded.list_position
                     """,
                     collector_rows,
+                )
+                # Delete only collectors not re-stamped by the upsert; replacing
+                # the whole project would cascade-delete every cached file entry.
+                await db.execute(
+                    "DELETE FROM collector WHERE project = ? AND cached_at IS NULL",
+                    (project,),
                 )
                 await db.commit()
             except Exception:

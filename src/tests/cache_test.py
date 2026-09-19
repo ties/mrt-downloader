@@ -13,6 +13,7 @@ import mrt_downloader.cache as cache
 from mrt_downloader.cache import (
     get_cached_collectors,
     get_cached_index,
+    get_cached_indexes_batch,
     get_month_end_date,
     init_cache_db,
     should_refresh_index,
@@ -20,6 +21,10 @@ from mrt_downloader.cache import (
     store_index,
 )
 from mrt_downloader.models import CollectorFileEntry, CollectorInfo
+
+# A month that ended long ago, so should_refresh_index() never overrides the
+# cache in tests that are checking what was stored.
+OLD_MONTH_END = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
 
 
 def make_test_collector(name: str = "RRC00") -> CollectorInfo:
@@ -77,128 +82,164 @@ async def test_init_cache_db_sets_schema_version():
         assert version == cache.CURRENT_CACHE_SCHEMA_VERSION
 
 
+# The schema as it was before normalisation. The test owns a copy because
+# cache.py deliberately no longer knows how to create it.
+_LEGACY_V2_SCHEMA = """
+CREATE TABLE collector_cache (
+    project TEXT NOT NULL,
+    name TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    installed TEXT NOT NULL,
+    removed TEXT,
+    cached_at INTEGER NOT NULL,
+    PRIMARY KEY (project, name)
+);
+CREATE TABLE index_cache (
+    url TEXT PRIMARY KEY,
+    downloaded_at INTEGER NOT NULL,
+    month_end_date TEXT NOT NULL
+);
+CREATE TABLE file_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    index_url TEXT NOT NULL,
+    collector_name TEXT NOT NULL,
+    collector_project TEXT NOT NULL,
+    collector_base_url TEXT NOT NULL,
+    collector_installed TEXT NOT NULL,
+    collector_removed TEXT,
+    filename TEXT NOT NULL,
+    file_url TEXT NOT NULL,
+    file_type TEXT,
+    FOREIGN KEY (index_url) REFERENCES index_cache(url) ON DELETE CASCADE
+);
+CREATE INDEX idx_file_cache_index_url ON file_cache(index_url);
+"""
+
+
+def _write_legacy_cache(db_path: Path, version: int) -> None:
+    with sqlite3.connect(db_path) as db:
+        db.executescript(_LEGACY_V2_SCHEMA)
+        db.execute(
+            "INSERT INTO index_cache (url, downloaded_at, month_end_date) VALUES (?, ?, ?)",
+            (
+                "https://data.ris.ripe.net/rrc00/2025.03/",
+                1,
+                "2025-03-31T23:59:59+00:00",
+            ),
+        )
+        db.execute(
+            """
+            INSERT INTO file_cache (
+                index_url, collector_name, collector_project, collector_base_url,
+                collector_installed, collector_removed, filename, file_url, file_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "https://data.ris.ripe.net/rrc00/2025.03/",
+                "RRC00",
+                "ris",
+                "https://data.ris.ripe.net/rrc00/",
+                "1999-10-01T00:00:00+00:00",
+                None,
+                "updates.20250311.1850.gz",
+                "https://data.ris.ripe.net/rrc00/2025.03/updates.20250311.1850.gz",
+                "update",
+            ),
+        )
+        db.execute(f"PRAGMA user_version = {version}")
+        db.commit()
+
+
 @pytest.mark.asyncio
-async def test_cache_migration_invalidates_routeviews_rows(monkeypatch):
+async def test_cache_migration_discards_legacy_cache():
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "test.db"
+        _write_legacy_cache(db_path, version=2)
 
-        monkeypatch.setattr(cache, "CURRENT_CACHE_SCHEMA_VERSION", 1)
         await init_cache_db(db_path)
-
-        with sqlite3.connect(db_path) as db:
-            db.executemany(
-                """
-                INSERT INTO collector_cache
-                    (project, name, base_url, installed, removed, cached_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        "routeviews",
-                        "route-views8",
-                        "https://archive.routeviews.org/route-views8/bgpdata/",
-                        "2025-03-11T12:00:00+00:00",
-                        None,
-                        1,
-                    ),
-                    (
-                        "ris",
-                        "RRC00",
-                        "https://data.ris.ripe.net/rrc00/",
-                        "1999-10-01T00:00:00+00:00",
-                        None,
-                        1,
-                    ),
-                ],
-            )
-            db.executemany(
-                """
-                INSERT INTO index_cache (url, downloaded_at, month_end_date)
-                VALUES (?, ?, ?)
-                """,
-                [
-                    (
-                        "https://archive.routeviews.org/route-views8/bgpdata/2025.03/UPDATES/",
-                        1,
-                        "2025-03-31T23:59:59+00:00",
-                    ),
-                    (
-                        "https://data.ris.ripe.net/rrc00/2025.03/",
-                        1,
-                        "2025-03-31T23:59:59+00:00",
-                    ),
-                ],
-            )
-            db.executemany(
-                """
-                INSERT INTO file_cache (
-                    index_url, collector_name, collector_project, collector_base_url,
-                    collector_installed, collector_removed, filename, file_url, file_type
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        "https://archive.routeviews.org/route-views8/bgpdata/2025.03/UPDATES/",
-                        "route-views8",
-                        "routeviews",
-                        "https://archive.routeviews.org/route-views8/bgpdata/",
-                        "2025-03-11T12:00:00+00:00",
-                        None,
-                        "updates.20250311.1852.bz2",
-                        "https://archive.routeviews.org/route-views8/bgpdata/2025.03/UPDATES/updates.20250311.1852.bz2",
-                        "update",
-                    ),
-                    (
-                        "https://data.ris.ripe.net/rrc00/2025.03/",
-                        "RRC00",
-                        "ris",
-                        "https://data.ris.ripe.net/rrc00/",
-                        "1999-10-01T00:00:00+00:00",
-                        None,
-                        "updates.20250311.1850.gz",
-                        "https://data.ris.ripe.net/rrc00/2025.03/updates.20250311.1850.gz",
-                        "update",
-                    ),
-                ],
-            )
-            db.commit()
-
-        monkeypatch.setattr(cache, "CURRENT_CACHE_SCHEMA_VERSION", 2)
-        await init_cache_db(db_path)
+        # Runs before every write, so it has to be idempotent.
         await init_cache_db(db_path)
 
         with sqlite3.connect(db_path) as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            routeviews_collectors = db.execute(
-                "SELECT COUNT(*) FROM collector_cache WHERE project = 'routeviews'"
-            ).fetchone()[0]
-            ris_collectors = db.execute(
-                "SELECT COUNT(*) FROM collector_cache WHERE project = 'ris'"
-            ).fetchone()[0]
-            routeviews_indexes = db.execute(
-                """
-                SELECT COUNT(*) FROM index_cache
-                WHERE url LIKE 'https://archive.routeviews.org/%'
-                   OR url LIKE 'https://archive2.routeviews.org/%'
-                """
-            ).fetchone()[0]
-            ris_indexes = db.execute(
-                "SELECT COUNT(*) FROM index_cache WHERE url LIKE 'https://data.ris.ripe.net/%'"
-            ).fetchone()[0]
-            routeviews_files = db.execute(
-                "SELECT COUNT(*) FROM file_cache WHERE collector_project = 'routeviews'"
-            ).fetchone()[0]
-            ris_files = db.execute(
-                "SELECT COUNT(*) FROM file_cache WHERE collector_project = 'ris'"
-            ).fetchone()[0]
+            tables = {
+                row[0]
+                for row in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' "
+                    "AND name NOT LIKE 'sqlite_%'"
+                )
+            }
+            indexes = db.execute("SELECT COUNT(*) FROM index_cache").fetchone()[0]
+            files = db.execute("SELECT COUNT(*) FROM file_cache").fetchone()[0]
+            file_columns = {
+                row[1] for row in db.execute("PRAGMA table_info(file_cache)")
+            }
 
-        assert version == 2
-        assert routeviews_collectors == 0
-        assert ris_collectors == 1
-        assert routeviews_indexes == 0
-        assert ris_indexes == 1
-        assert routeviews_files == 0
-        assert ris_files == 1
+        assert version == cache.CURRENT_CACHE_SCHEMA_VERSION
+        assert tables == {"collector", "index_cache", "file_cache"}
+        assert indexes == 0
+        assert files == 0
+        assert file_columns == {
+            "index_id",
+            "collector_id",
+            "filename",
+            "url_suffix",
+            "file_type",
+        }
+
+        url = "https://data.ris.ripe.net/rrc00/2023.01/"
+        await store_index(url, make_test_file_entries(0), OLD_MONTH_END, db_path)
+        assert await get_cached_index(url, OLD_MONTH_END, db_path=db_path)
+
+
+@pytest.mark.asyncio
+async def test_unversioned_cache_is_compacted_after_rebuild():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        _write_legacy_cache(db_path, version=0)
+        with sqlite3.connect(db_path) as db:
+            db.execute("CREATE TABLE padding (contents BLOB)")
+            db.execute("INSERT INTO padding VALUES (randomblob(1024 * 1024))")
+            db.commit()
+
+        await init_cache_db(db_path)
+
+        with sqlite3.connect(db_path) as db:
+            free_pages = db.execute("PRAGMA freelist_count").fetchone()[0]
+
+        assert free_pages == 0
+
+
+@pytest.mark.asyncio
+async def test_cache_from_an_unknown_schema_is_discarded():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        _write_legacy_cache(db_path, version=99)
+
+        await init_cache_db(db_path)
+
+        with sqlite3.connect(db_path) as db:
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            files = db.execute("SELECT COUNT(*) FROM file_cache").fetchone()[0]
+
+        assert version == cache.CURRENT_CACHE_SCHEMA_VERSION
+        assert files == 0
+
+
+@pytest.mark.asyncio
+async def test_schema_has_no_secondary_indexes():
+    """Prevent redundant secondary indexes from returning to the schema."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        await init_cache_db(db_path)
+
+        with sqlite3.connect(db_path) as db:
+            extra_indexes = db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' "
+                "AND name NOT LIKE 'sqlite_autoindex_%'"
+            ).fetchall()
+
+        assert extra_indexes == []
 
 
 @pytest.mark.asyncio
@@ -245,11 +286,21 @@ async def test_store_and_retrieve_index():
         cached_entries = await get_cached_index(url, month_end_date, db_path=db_path)
         assert cached_entries is not None
         assert len(cached_entries) == 2
-        assert cached_entries[0].filename == "updates.20230115.0000.gz"
-        assert cached_entries[0].file_type == "update"
-        assert cached_entries[1].filename == "bview.20230101.0000.gz"
-        assert cached_entries[1].file_type == "rib"
-        assert cached_entries[0].collector.name == "RRC00"
+
+        by_name = {entry.filename: entry for entry in cached_entries}
+        assert by_name["updates.20230115.0000.gz"].file_type == "update"
+        assert by_name["bview.20230101.0000.gz"].file_type == "rib"
+        assert by_name["updates.20230115.0000.gz"].collector.name == "RRC00"
+        assert [entry.filename for entry in cached_entries] == [
+            "bview.20230101.0000.gz",
+            "updates.20230115.0000.gz",
+        ]
+
+        # The URLs survive even though they are not stored verbatim.
+        assert (
+            by_name["updates.20230115.0000.gz"].url
+            == "https://data.ris.ripe.net/rrc00/2023.01/updates.20230115.0000.gz"
+        )
 
 
 @pytest.mark.asyncio
@@ -642,3 +693,332 @@ async def test_store_index_does_not_raise_when_database_stays_locked(
 
         assert "Failed to store index cache" in caplog.text
         assert "database is locked" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_collector_refresh_keeps_the_file_cache():
+    """A listing refresh must not cascade-delete retained collectors' files."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        collector = make_test_collector()
+        url = f"{collector.base_url}2023.01/"
+
+        await store_index(
+            url, make_test_file_entries(0, collector), OLD_MONTH_END, db_path
+        )
+        await store_collectors("ris", [collector], db_path)
+
+        cached = await get_cached_index(url, OLD_MONTH_END, db_path=db_path)
+        assert cached is not None
+        assert len(cached) == 1
+        assert cached[0].collector == collector
+
+
+@pytest.mark.asyncio
+async def test_collector_dropped_from_listing_takes_its_files_with_it():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        kept = make_test_collector("RRC00")
+        dropped = make_test_collector("RRC01")
+
+        kept_url = f"{kept.base_url}2023.01/"
+        dropped_url = f"{dropped.base_url}2023.01/"
+        await store_index(
+            kept_url, make_test_file_entries(0, kept), OLD_MONTH_END, db_path
+        )
+        await store_index(
+            dropped_url, make_test_file_entries(1, dropped), OLD_MONTH_END, db_path
+        )
+        await store_collectors("ris", [kept, dropped], db_path)
+
+        await store_collectors("ris", [kept], db_path)
+
+        assert await get_cached_index(kept_url, OLD_MONTH_END, db_path=db_path)
+        assert await get_cached_index(dropped_url, OLD_MONTH_END, db_path=db_path) == []
+
+        with sqlite3.connect(db_path) as db:
+            names = [row[0] for row in db.execute("SELECT name FROM collector")]
+        assert names == ["RRC00"]
+
+
+@pytest.mark.asyncio
+async def test_collector_seen_only_through_an_index_is_not_a_listing():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        collector = make_test_collector()
+
+        await store_index(
+            f"{collector.base_url}2023.01/",
+            make_test_file_entries(0, collector),
+            OLD_MONTH_END,
+            db_path,
+        )
+
+        assert await get_cached_collectors("ris", db_path=db_path) is None
+
+        with sqlite3.connect(db_path) as db:
+            count = db.execute("SELECT COUNT(*) FROM collector").fetchone()[0]
+        assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_collectors_are_interned_across_indexes():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        collector = make_test_collector()
+
+        for month in ("2023.01", "2023.02"):
+            await store_index(
+                f"{collector.base_url}{month}/",
+                make_test_file_entries(0, collector),
+                OLD_MONTH_END,
+                db_path,
+            )
+
+        with sqlite3.connect(db_path) as db:
+            count = db.execute("SELECT COUNT(*) FROM collector").fetchone()[0]
+        assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_collector_instances_are_shared_between_entries():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        collector = make_test_collector()
+        urls = [f"{collector.base_url}{month}/" for month in ("2023.01", "2023.02")]
+
+        for index, url in enumerate(urls):
+            await store_index(
+                url, make_test_file_entries(index, collector), OLD_MONTH_END, db_path
+            )
+
+        cached = await get_cached_indexes_batch(
+            [(url, OLD_MONTH_END) for url in urls], db_path=db_path
+        )
+
+        first, second = (cached[url][0] for url in urls)
+        assert first.collector is second.collector
+
+
+@pytest.mark.asyncio
+async def test_derivable_urls_are_not_stored():
+    """Derived URLs should not add per-row storage."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        collector = make_test_collector()
+        url = f"{collector.base_url}2023.01/"
+
+        await store_index(
+            url, make_test_file_entries(0, collector), OLD_MONTH_END, db_path
+        )
+
+        with sqlite3.connect(db_path) as db:
+            suffixes = [
+                row[0] for row in db.execute("SELECT url_suffix FROM file_cache")
+            ]
+        assert suffixes == [None]
+
+        cached = await get_cached_index(url, OLD_MONTH_END, db_path=db_path)
+        assert cached[0].url == f"{url}updates.20230115.0000.gz"
+
+
+@pytest.mark.asyncio
+async def test_subdirectory_url_round_trips():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        collector = make_test_collector()
+        url = f"{collector.base_url}2023.01/"
+        entry = CollectorFileEntry(
+            collector=collector,
+            filename="rib.20230101.0000.bz2",
+            url=f"{url}RIBS/rib.20230101.0000.bz2",
+            file_type="rib",
+        )
+
+        await store_index(url, [entry], OLD_MONTH_END, db_path)
+
+        with sqlite3.connect(db_path) as db:
+            suffix = db.execute("SELECT url_suffix FROM file_cache").fetchone()[0]
+        assert suffix == "RIBS/rib.20230101.0000.bz2"
+
+        cached = await get_cached_index(url, OLD_MONTH_END, db_path=db_path)
+        assert cached == [entry]
+
+
+@pytest.mark.asyncio
+async def test_url_outside_the_index_round_trips():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        collector = make_test_collector()
+        url = "https://example.com/2023.01/"
+        entry = CollectorFileEntry(
+            collector=collector,
+            filename="updates.20230115.0000.gz",
+            url="https://data.ris.ripe.net/rrc00/2023.01/updates.20230115.0000.gz",
+            file_type="update",
+        )
+
+        await store_index(url, [entry], OLD_MONTH_END, db_path)
+
+        cached = await get_cached_index(url, OLD_MONTH_END, db_path=db_path)
+        assert cached == [entry]
+
+
+@pytest.mark.asyncio
+async def test_file_type_round_trips():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        collector = make_test_collector()
+        url = f"{collector.base_url}2023.01/"
+        entries = [
+            CollectorFileEntry(
+                collector=collector,
+                filename=f"{name}.gz",
+                url=f"{url}{name}.gz",
+                file_type=file_type,
+            )
+            for name, file_type in (
+                ("bview.20230101.0000", "rib"),
+                ("updates.20230101.0000", "update"),
+                ("mystery.20230101.0000", None),
+            )
+        ]
+
+        await store_index(url, entries, OLD_MONTH_END, db_path)
+
+        with sqlite3.connect(db_path) as db:
+            stored = sorted(
+                row[0]
+                for row in db.execute("SELECT file_type FROM file_cache")
+                if row[0] is not None
+            )
+        assert stored == [1, 2]
+
+        cached = await get_cached_index(url, OLD_MONTH_END, db_path=db_path)
+        assert {entry.filename: entry.file_type for entry in cached} == {
+            "bview.20230101.0000.gz": "rib",
+            "updates.20230101.0000.gz": "update",
+            "mystery.20230101.0000.gz": None,
+        }
+
+
+@pytest.mark.asyncio
+async def test_store_index_replaces_the_previous_listing():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        collector = make_test_collector()
+        url = f"{collector.base_url}2023.01/"
+
+        first = [
+            entry
+            for number in range(3)
+            for entry in make_test_file_entries(number, collector)
+        ]
+        await store_index(url, first, OLD_MONTH_END, db_path)
+        await store_index(
+            url, make_test_file_entries(0, collector), OLD_MONTH_END, db_path
+        )
+
+        cached = await get_cached_index(url, OLD_MONTH_END, db_path=db_path)
+        assert [entry.filename for entry in cached] == ["updates.20230115.0000.gz"]
+
+
+@pytest.mark.asyncio
+async def test_repeated_filenames_in_one_index_collapse():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        collector = make_test_collector()
+        url = f"{collector.base_url}2023.01/"
+        entries = make_test_file_entries(0, collector) * 2
+
+        await store_index(url, entries, OLD_MONTH_END, db_path)
+
+        cached = await get_cached_index(url, OLD_MONTH_END, db_path=db_path)
+        assert len(cached) == 1
+
+
+@pytest.mark.asyncio
+async def test_deleting_an_index_cascades_to_its_files():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        collector = make_test_collector()
+        url = f"{collector.base_url}2023.01/"
+        await store_index(
+            url, make_test_file_entries(0, collector), OLD_MONTH_END, db_path
+        )
+
+        with sqlite3.connect(db_path) as db:
+            db.execute("PRAGMA foreign_keys = ON")
+            db.execute("DELETE FROM index_cache WHERE url = ?", (url,))
+            db.commit()
+            remaining = db.execute("SELECT COUNT(*) FROM file_cache").fetchone()[0]
+
+        assert remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_batch_lookup_round_trip():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        collector = make_test_collector()
+        stored = [f"{collector.base_url}{month}/" for month in ("2023.01", "2023.02")]
+        missing = f"{collector.base_url}2023.03/"
+
+        for number, url in enumerate(stored):
+            await store_index(
+                url, make_test_file_entries(number, collector), OLD_MONTH_END, db_path
+            )
+
+        requested = [(url, OLD_MONTH_END) for url in stored + [missing]]
+        cached = await get_cached_indexes_batch(requested, db_path=db_path)
+
+        assert set(cached) == set(stored)
+        assert all(len(entries) == 1 for entries in cached.values())
+        assert cached[stored[0]][0].url == f"{stored[0]}updates.20230115.0000.gz"
+
+        assert (
+            await get_cached_indexes_batch(
+                requested, force_refresh=True, db_path=db_path
+            )
+            == {}
+        )
+
+
+@pytest.mark.asyncio
+async def test_batch_lookup_handles_more_urls_than_one_query_allows():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        collector = make_test_collector()
+        count = cache.SQL_PARAM_CHUNK * 2 + 7
+        urls = [f"{collector.base_url}index-{number}/" for number in range(count)]
+
+        for number, url in enumerate(urls):
+            await store_index(
+                url, make_test_file_entries(number, collector), OLD_MONTH_END, db_path
+            )
+
+        cached = await get_cached_indexes_batch(
+            [(url, OLD_MONTH_END) for url in urls], db_path=db_path
+        )
+
+        assert len(cached) == count
+
+
+@pytest.mark.asyncio
+async def test_empty_collector_list_is_not_cached():
+    """An empty response must not retire collectors and their cached files."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        collector = make_test_collector()
+        url = f"{collector.base_url}2023.01/"
+
+        await store_index(
+            url, make_test_file_entries(0, collector), OLD_MONTH_END, db_path
+        )
+        await store_collectors("ris", [collector], db_path)
+
+        await store_collectors("ris", [], db_path)
+
+        assert await get_cached_collectors("ris", db_path=db_path) == [collector]
+        cached = await get_cached_index(url, OLD_MONTH_END, db_path=db_path)
+        assert len(cached) == 1

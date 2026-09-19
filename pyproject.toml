@@ -1,9 +1,9 @@
 [project]
 name = "mrt-downloader"
-version = "0.17.1"
+version = "0.18.0"
 description = ""
 authors = [{name="Ties de Kock", email="ties@tiesdekock.nl"}]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 readme = "README.md"
 packages = [{include = "mrt_downloader"}]
 dependencies = [

@@ -4,7 +4,9 @@
 
 Download MRT update or bview files, from RIPE RIS, routeviews, or both.
 The CLI uses a local cache for the index pages from the route collector
-projects.
+projects, in `~/.cache/mrt-downloader/state.sqlite3`. It is safe to delete at
+any time; it is rebuilt from the network. Upgrading to a version that changes
+the cache format discards it once and downloads the index pages again.
 RouteViews downloads prefer OSDF by default. To use the regular RouteViews
 archive mirrors for file downloads, add
 `--routeviews-mirror-strategy=archive-random`.
@@ -28,7 +30,7 @@ mrt-downloader mrt 2025-01-16T00:50 2025-01-17T00:00
 
 # Installation
 
-This project requires python 3.11 or higher. Some operating systems may not
+This project requires python 3.12 or higher. Some operating systems may not
 include this python version. In turn, this means that you may need to use
 install a higher python version first. An example of this on Rocky Linux 9 is
 given below.

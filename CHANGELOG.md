@@ -1,3 +1,14 @@
+## v0.18.0
+
+  * Normalised the SQLite index cache. Collectors are stored once and referenced
+    by id instead of being repeated in full on every file row, file entries
+    reference their index by id rather than by URL, the file URL is rebuilt from
+    the index URL on read instead of being stored, and the file type is kept as a
+    small integer.
+  * The minimum supported python version is now 3.12 (was 3.11).
+  * An empty response from a collector API is no longer cached. It is treated as
+    a failed request, and the previous collector list is kept.
+
 ## v0.17.1
 
   * Use the latest dump time from routeviews API as cutoff (with a 31 day grace
