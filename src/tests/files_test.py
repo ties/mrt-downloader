@@ -147,7 +147,7 @@ def test_collector_partitioned_year_month_day_hour() -> None:
 def test_prefix_collector() -> None:
     """Test parsing paths prefixed by collector"""
     chicago = [Path("route-views.chicago-updates.20250714.2345.bz2")]
-    rio = [Path("route-views.rio-updates.20250714.2345.bz2")]
+    rio = [Path("route-views.rio-updates.20250704.2345.bz2")]
 
     strategy = PrefixCollectorStrategy()
 
@@ -158,16 +158,16 @@ def test_prefix_collector() -> None:
 
     assert strategy.parse(rio) == {
         "collector": "route-views.rio",
-        "filename": "updates.20250714.2345.bz2",
+        "filename": "updates.20250704.2345.bz2",
     }
 
 
 def test_string_arguments() -> None:
     """Test paths that are partitioned by year-month + hour, filename prefixed by collector."""
     chicago = [
-        "2025.07.14",
+        "2025.07.04",
         "23",
-        "route-views.chicago-updates.20250714.2345.bz2",
+        "route-views.chicago-updates.20250704.2345.bz2",
     ]
 
     strategy = PrefixCollectorByHourStrategy()
@@ -175,11 +175,11 @@ def test_string_arguments() -> None:
     assert strategy.parse(chicago) == {
         "collector": "route-views.chicago",
         "year": "2025",
-        "month": "07",
-        "day": "14",
+        "month": "7",
+        "day": "4",
         "hour": "23",
         "minute": "45",
-        "filename": "updates.20250714.2345.bz2",
+        "filename": "updates.20250704.2345.bz2",
     }
 
 
@@ -189,6 +189,11 @@ def test_collector_by_hour() -> None:
         Path("2025.07.14"),
         Path("23"),
         Path("route-views.chicago-updates.20250714.2345.bz2"),
+    ]
+    chicago_4th_dec = [
+        Path("2025.12.04"),
+        Path("23"),
+        Path("route-views.chicago-updates.20251204.2305.bz2"),
     ]
     rio = [
         Path("2025.06.13"),
@@ -201,17 +206,27 @@ def test_collector_by_hour() -> None:
     assert strategy.parse(chicago) == {
         "collector": "route-views.chicago",
         "year": "2025",
-        "month": "07",
+        "month": "7",
         "day": "14",
         "hour": "23",
         "minute": "45",
         "filename": "updates.20250714.2345.bz2",
     }
 
+    assert strategy.parse(chicago_4th_dec) == {
+        "collector": "route-views.chicago",
+        "year": "2025",
+        "month": "12",
+        "day": "4",
+        "hour": "23",
+        "minute": "5",
+        "filename": "updates.20251204.2305.bz2",
+    }
+
     assert strategy.parse(rio) == {
         "collector": "route-views.rio",
         "year": "2025",
-        "month": "06",
+        "month": "6",
         "day": "13",
         "hour": "22",
         "minute": "45",
