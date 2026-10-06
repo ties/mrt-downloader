@@ -296,8 +296,8 @@ async def init_cache_db(db_path: Path | None = None) -> None:
                 # file is a much smaller problem than a failed run.
                 try:
                     await db.execute("VACUUM")
-                except Exception as exc:
-                    LOG.debug("Could not compact the cache database: %s", exc)
+                except Exception:
+                    LOG.exception("Could not compact the cache database")
 
     async with _get_write_lock(db_path):
         await _retry_on_sqlite_lock("Initialize cache database", initialize)
@@ -513,9 +513,9 @@ async def get_cached_index(
                 return file_entries
 
         return await _retry_on_sqlite_lock(f"Look up index cache for {url}", lookup)
-    except Exception as e:
+    except Exception:
         # If the database doesn't exist or there's an error, just return None
-        LOG.debug(f"Cache lookup failed for {url}: {e}")
+        LOG.exception(f"Cache lookup failed for {url}")
         return None
 
 
@@ -596,9 +596,9 @@ async def store_index(
         )
 
         LOG.debug(f"Stored {len(file_entries)} file entries in cache for {url}")
-    except Exception as e:
+    except Exception:
         # Log but don't fail if caching fails
-        LOG.warning(f"Failed to store index cache for {url}: {e}")
+        LOG.exception(f"Failed to store index cache for {url}")
 
 
 async def get_cached_indexes_batch(
@@ -720,8 +720,8 @@ async def get_cached_indexes_batch(
                 return result
 
         return await _retry_on_sqlite_lock("Batch index cache lookup", lookup)
-    except Exception as e:
-        LOG.warning(f"Batch cache lookup failed: {e}")
+    except Exception:
+        LOG.exception("Batch cache lookup failed")
         return {}
 
 
