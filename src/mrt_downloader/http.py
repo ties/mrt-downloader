@@ -177,9 +177,13 @@ class RetryHelper:
             except (TimeoutError, aiohttp.ClientError, ConnectionError) as e:
                 last_exception = e
 
-                if isinstance(e, aiohttp.ClientResponseError) and 400 <= e.status < 500 and e.status not in retryable_client_statuses:
-                        LOG.error(f"{operation_name} failed with client error: {e}")
-                        raise
+                if (
+                    isinstance(e, aiohttp.ClientResponseError)
+                    and 400 <= e.status < 500
+                    and e.status not in retryable_client_statuses
+                ):
+                    LOG.error(f"{operation_name} failed with client error: {e}")
+                    raise
 
                 # Calculate backoff delay
                 if attempt < attempt_limit - 1:
@@ -766,7 +770,9 @@ class DownloadWorker:
             try:
                 await self.download_file(download)
             except Exception:
-                LOG.exception("DownloadWorker encountered an exception for item %d", processed)
+                LOG.exception(
+                    "DownloadWorker encountered an exception for item %d", processed
+                )
             finally:
                 self.queue.task_done()
         return processed
