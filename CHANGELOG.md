@@ -47,7 +47,7 @@
   * Retry on index failures and retry on 429.
   * Update dependencies
 
-## v0.0.14 
+## v0.0.14
 
   * Support hour subdirs with `ByYearMonthDayHourStrategy`.
 
