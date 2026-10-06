@@ -19,6 +19,11 @@ class ParsedFilenameSegments:
 
 
 def parse_standard_filename(filename: str) -> ParsedFilenameSegments:
+    """
+    Parse a filename into segments.
+
+    Components values that are present are strings without leading zeroes.
+    """
     year, month, day, hour, minute = None, None, None, None, None
 
     dt = parse_mrt_filename_date(filename)
@@ -205,7 +210,7 @@ class ByYearMonthDayHourStrategy(FileNamingStrategy):
         year = int(str(path[0]))
         month = int(str(path[1]))
         day = int(str(path[2]))
-        hour = str(path[3])
+        hour = int(str(path[3]))
         segments = parse_standard_filename(str(path[4]))
 
         return {
@@ -213,7 +218,7 @@ class ByYearMonthDayHourStrategy(FileNamingStrategy):
             "month": str(month),
             "filename": str(path[4]),
             "day": str(day),
-            "hour": hour,
+            "hour": str(hour),
             "minute": segments.minute,
         }
 
@@ -228,7 +233,7 @@ class ByHourStrategy(FileNamingStrategy):
         )
 
     def parse(self, path: Sequence[str | pathlib.Path]) -> dict[str, str | None]:
-        year, month, day = str(path[0]).split(".")
+        year, month, day = [str(int(seg)) for seg in str(path[0]).split(".")]
         return {
             "year": year,
             "month": month,
@@ -263,7 +268,8 @@ class PrefixCollectorByHourStrategy(FileNamingStrategy):
         assert len(path) == 3, (
             "Expected path to have 3 components: year.month.day, hour, filename"
         )
-        year, month, day = str(path[0]).split(".")
+        # parse segments as integer
+        year, month, day = [str(int(seg)) for seg in str(path[0]).split(".")]
 
         collector, filename = split_on_dash_except_route_views(str(path[2]))
         standard_filename = str(path[2]).split("-")[-1]
