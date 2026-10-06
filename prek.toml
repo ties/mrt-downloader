@@ -3,20 +3,9 @@
 #:schema https://www.schemastore.org/prek.json
 
 [[repos]]
-repo = "https://github.com/pycqa/isort"
-rev = "9.0.2"
-hooks = [
-  {
-    id = "isort",
-    name = "isort (python)",
-    additional_dependencies = ["toml"]
-  }
-]
-
-[[repos]]
 repo = "https://github.com/astral-sh/ruff-pre-commit"
 rev = "v0.16.10"
 hooks = [
-  { id = "ruff-check" },
+  { id = "ruff-check", args = ["--fix"] },
   { id = "ruff-format" }
 ]

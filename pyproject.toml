@@ -20,15 +20,8 @@ mrt-downloader = "mrt_downloader.cli:cli"
 requires = ["uv_build>=0.7.8,<0.13.0"]
 build-backend = "uv_build"
 
-[tool.isort]
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-line_length = 88
-profile = "black"
-
 [tool.ruff]
+lint.extend-select = ["I"]
 lint.ignore = ["E501"]
 
 [tool.pytest]
@@ -36,12 +29,9 @@ junit_family = "xunit2"
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "auto"
 
-[settings]
-
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-xdist>=3.8.0",
 ]
-# known_third_party = []
