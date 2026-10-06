@@ -177,8 +177,7 @@ class RetryHelper:
             except (TimeoutError, aiohttp.ClientError, ConnectionError) as e:
                 last_exception = e
 
-                if isinstance(e, aiohttp.ClientResponseError) and 400 <= e.status < 500:
-                    if e.status not in retryable_client_statuses:
+                if isinstance(e, aiohttp.ClientResponseError) and 400 <= e.status < 500 and e.status not in retryable_client_statuses:
                         LOG.error(f"{operation_name} failed with client error: {e}")
                         raise
 
@@ -503,8 +502,8 @@ async def worker(session: aiohttp.ClientSession, queue: asyncio.Queue[Download])
         processed += 1
         try:
             await download_file(session, download)
-        except Exception as e:
-            LOG.error(e)
+        except Exception:
+            LOG.exception("Worker encounted an exception for task %d", processed)
         finally:
             queue.task_done()
 
@@ -766,8 +765,8 @@ class DownloadWorker:
             processed += 1
             try:
                 await self.download_file(download)
-            except Exception as e:
-                LOG.error(e)
+            except Exception:
+                LOG.exception("DownloadWorker encountered an exception for item %d", processed)
             finally:
                 self.queue.task_done()
         return processed
@@ -776,7 +775,7 @@ class DownloadWorker:
 class IndexWorker:
     session: aiohttp.ClientSession
     queue: asyncio.Queue[CollectorIndexEntry]
-    results: list[CollectorFileEntry] = []
+    results: list[CollectorFileEntry]
     file_types: frozenset[Literal["rib", "update"]]
     db_path: Path | None
     force_cache_refresh: bool
@@ -846,14 +845,14 @@ class IndexWorker:
                     self.results.extend(cached_entries)
                 else:
                     # Download and parse fresh content with retry logic
-                    async def download_index():
-                        async with self.session.get(index_entry.url) as response:
+                    async def download_index(idx: CollectorIndexEntry = index_entry):
+                        async with self.session.get(idx.url) as response:
                             if response.status != 200:
                                 LOG.error(
                                     "Failed to download index %s: HTTP %d for %s",
-                                    index_entry.url,
+                                    idx.url,
                                     response.status,
-                                    index_entry.collector,
+                                    idx.collector,
                                 )
                                 raise aiohttp.ClientResponseError(
                                     request_info=response.request_info,
@@ -882,8 +881,8 @@ class IndexWorker:
                     )
 
                     self.results.extend(file_entries)
-            except Exception as e:
-                LOG.error(e)
+            except Exception:
+                LOG.exception("Failure while downloading %s", index_entry.url)
 
         # Mark all queue items as done
         for _ in entries_to_process:

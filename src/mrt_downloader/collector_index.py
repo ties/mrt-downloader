@@ -126,9 +126,7 @@ def process_index_entry(
         filename = os.path.basename(path)
 
         match filename:
-            case f if (
-                f.startswith("bview.") or f.startswith("view.") or f.startswith("rib.")
-            ):
+            case f if f.startswith(("bview.", "view.", "rib.")):
                 file_type = "rib"
             case f if f.startswith("updates."):
                 file_type = "update"
@@ -204,7 +202,7 @@ async def process_rrc_index(
 
             for link in parser.links:
                 file_name = link.split("/")[-1]
-                if file_name.startswith("updates.") or file_name.startswith("bview."):
+                if file_name.startswith(("bview.", "updates.")):
                     result.append(
                         CollectorFileEntry(
                             entry.collector,

@@ -10,6 +10,7 @@ from tests.collector_index_test import (  # noqa: F401
     ris_collectors,
     routeviews_collectors,
 )
+from tests.util import find_collector
 
 
 @pytest.mark.asyncio
@@ -20,7 +21,7 @@ async def test_get_file_entries_ris(ris_collectors: list[CollectorInfo]):  # noq
         worker = IndexWorker(sess, index_queue)
         index_queue.put_nowait(
             CollectorIndexEntry(
-                [r for r in ris_collectors if r.name == "RRC00"][0],
+                find_collector(ris_collectors, "RRC00"),
                 "https://data.ris.ripe.net/rrc00/2025.04/",
                 datetime.datetime(2025, 4, 1, tzinfo=datetime.UTC),
                 file_types=frozenset({"rib", "update"}),
@@ -28,7 +29,7 @@ async def test_get_file_entries_ris(ris_collectors: list[CollectorInfo]):  # noq
         )
         index_queue.put_nowait(
             CollectorIndexEntry(
-                [r for r in ris_collectors if r.name == "RRC25"][0],
+                find_collector(ris_collectors, "RRC25"),
                 "https://data.ris.ripe.net/rrc25/2025.04/",
                 datetime.datetime(2025, 4, 1, tzinfo=datetime.UTC),
                 file_types=frozenset({"rib", "update"}),
@@ -45,11 +46,11 @@ async def test_get_file_entries_ris(ris_collectors: list[CollectorInfo]):  # noq
         assert len(worker.results) > 2 * 28 * 24 * 12
 
         # All urls are unique
-        unique_urls = set(x.url for x in worker.results)
+        unique_urls = {x.url for x in worker.results}
         assert len(unique_urls) == len(worker.results)
         # dates are slightly below 0.5x the number of unique entries, since they overlap
         # between collectors. And that ribs overlap with updates.
-        unique_dates = set(x.date for x in worker.results)
+        unique_dates = {x.date for x in worker.results}
         assert 0.4 * len(worker.results) < len(unique_dates) < 0.5 * len(worker.results)
 
         # We have both typs
@@ -60,7 +61,7 @@ async def test_get_file_entries_ris(ris_collectors: list[CollectorInfo]):  # noq
 
 @pytest.mark.asyncio
 async def test_get_file_entries_routeviews(routeviews_collectors: list[CollectorInfo]):  # noqa: F811
-    bknix = [r for r in routeviews_collectors if r.name == "route-views.bknix"][0]
+    bknix = find_collector(routeviews_collectors, "route-views.bknix")
     async with build_session() as sess:
         index_queue = asyncio.Queue()
 
@@ -92,11 +93,11 @@ async def test_get_file_entries_routeviews(routeviews_collectors: list[Collector
         assert len(worker.results) > 28 * 24 * 4
 
         # All urls are unique
-        unique_urls = set(x.url for x in worker.results)
+        unique_urls = {x.url for x in worker.results}
         assert len(unique_urls) == len(worker.results)
         # dates are slightly below 0.5x the number of unique entries, since they overlap
         # between collectors. And that ribs overlap with updates.
-        unique_dates = set(x.date for x in worker.results)
+        unique_dates = {x.date for x in worker.results}
         assert len(unique_dates) == len(
             [x for x in worker.results if x.file_type == "update"]
         )
@@ -111,7 +112,7 @@ async def test_get_file_entries_routeviews(routeviews_collectors: list[Collector
 async def test_get_file_entries_routeviews_ribs(
     routeviews_collectors: list[CollectorInfo],  # noqa: F811
 ):
-    bknix = [r for r in routeviews_collectors if r.name == "route-views.bknix"][0]
+    bknix = find_collector(routeviews_collectors, "route-views.bknix")
 
     async with build_session() as sess:
         index_queue = asyncio.Queue()

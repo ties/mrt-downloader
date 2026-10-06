@@ -14,6 +14,7 @@ from mrt_downloader.collectors import (
     parse_routeviews_collectors,
 )
 from mrt_downloader.models import CollectorIndexEntry, CollectorInfo
+from tests.util import find_collector
 
 
 @pytest.fixture
@@ -37,7 +38,7 @@ def ris_collectors() -> list[CollectorInfo]:
 def test_parse_routeviews_collectors_adds_recent_activity_grace(
     routeviews_collectors: list[CollectorInfo],
 ) -> None:
-    bknix = [c for c in routeviews_collectors if c.name == "route-views.bknix"][0]
+    bknix = find_collector(routeviews_collectors, "route-views.bknix")
 
     assert bknix.project == "routeviews"
     assert bknix.base_url == "https://archive.routeviews.org/route-views.bknix/bgpdata/"
@@ -144,7 +145,7 @@ def test_index_files_for_collector_routeviews(
 def test_index_files_for_routeviews_includes_first_partial_month(
     routeviews_collectors: list[CollectorInfo],
 ) -> None:
-    routeviews8 = [c for c in routeviews_collectors if c.name == "route-views8"][0]
+    routeviews8 = next(filter(lambda c: c.name == "route-views8", routeviews_collectors))
 
     index_files = index_files_for_collector(
         routeviews8,
@@ -161,7 +162,7 @@ def test_index_files_for_routeviews_includes_first_partial_month(
 def test_index_files_for_routeviews_includes_only_month_within_activity_grace(
     routeviews_collectors: list[CollectorInfo],
 ) -> None:
-    bknix = [c for c in routeviews_collectors if c.name == "route-views.bknix"][0]
+    bknix = next(filter(lambda c: c.name == "route-views.bknix", routeviews_collectors))
 
     index_files = index_files_for_collector(
         bknix,
@@ -219,7 +220,7 @@ def test_index_files_for_ris(ris_collectors: list[CollectorInfo]) -> None:
 
     # Two index files, both contain ribs + updates
     assert len(index_files) == 2
-    assert all(map(lambda idx: set(idx.file_types) == {"rib", "update"}, index_files))
+    assert all(set(idx.file_types) == {"rib", "update"} for idx in index_files)
 
     assert index_files[0].time_period == datetime.datetime(
         2024, 1, 1, tzinfo=datetime.UTC
@@ -241,9 +242,9 @@ def test_parse_index_file_routeviews_ribs() -> None:
         entries = process_index_entry(index_entry, f.read())
         assert len(entries) > 28 * 12
 
-        urls = set(x.url for x in entries)
-        dates = set(x.date for x in entries)
-        types = set(x.file_type for x in entries)
+        urls = {x.url for x in entries}
+        dates = {x.date for x in entries}
+        types = {x.file_type for x in entries}
 
         assert types == {"rib"}
 
@@ -263,9 +264,9 @@ def test_parse_index_file_routeviews_updates() -> None:
         entries = process_index_entry(index_entry, f.read())
         assert len(entries) > 28 * 24 * 4  # 4 updates per hour
 
-        urls = set(x.url for x in entries)
-        dates = set(x.date for x in entries)
-        types = set(x.file_type for x in entries)
+        urls = {x.url for x in entries}
+        dates = {x.date for x in entries}
+        types = {x.file_type for x in entries}
 
         assert types == {"update"}
 
@@ -285,9 +286,9 @@ def test_parse_index_file_ris() -> None:
         entries = process_index_entry(index_entry, f.read())
         assert len(entries) > 24 * 12 + 3  # 12 updates per hour + 3 bviews.
 
-        urls = set(x.url for x in entries)
-        dates = set(x.date for x in entries)
-        types = set(x.file_type for x in entries)
+        urls = {x.url for x in entries}
+        dates = {x.date for x in entries}
+        types = {x.file_type for x in entries}
 
         assert types == {"update", "rib"}
 

@@ -120,8 +120,8 @@ async def download_files(
     try:
         await init_cache_db(db_path)
         LOG.info(f"Using index cache at {db_path}")
-    except Exception as e:
-        LOG.warning("Index cache is unavailable at %s: %s", db_path, e)
+    except Exception:
+        LOG.exception("Index cache is unavailable at %s", db_path)
 
     file_types = frozenset(
         ["rib"] if rib_only else ["update"] if update_only else ["rib", "update"]
@@ -165,7 +165,7 @@ async def download_files(
             for collector in collector_infos
             if (
                 not collectors
-                or (collector.name.lower() in set(c.lower() for c in collectors))
+                or collector.name.lower() in {c.lower() for c in collectors}
             )
         ]
         click.echo(
