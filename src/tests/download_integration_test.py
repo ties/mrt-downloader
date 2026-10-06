@@ -11,7 +11,7 @@ from mrt_downloader.files import PrefixCollectorStrategy
 @pytest.mark.asyncio
 async def test_mrt_download(tmp_path: pathlib.Path) -> None:
     # Download a limited number of files
-    yesterday_midnight = (datetime.datetime.now() - datetime.timedelta(days=1)).replace(
+    yesterday_midnight = (datetime.datetime.now(tz=datetime.UTC) - datetime.timedelta(days=1)).replace(
         hour=0, minute=0, second=0, microsecond=0, tzinfo=datetime.UTC
     )
     yesterday_one_am = yesterday_midnight.replace(hour=1)
@@ -34,16 +34,16 @@ async def test_mrt_download(tmp_path: pathlib.Path) -> None:
     assert len(files) > 24
     print(list(tmp_path.glob("*update*")))
 
-    update_files = set(
+    update_files = {
         p.name
         for p in tmp_path.glob("*updates*")
         if ".download-metadata.json" not in p.name
-    )
-    bview_files = set(
+    }
+    bview_files = {
         p.name
         for p in tmp_path.glob("*bview*")
         if ".download-metadata.json" not in p.name
-    )
+    }
 
     assert len(bview_files) == 2
     assert len(update_files) == 26

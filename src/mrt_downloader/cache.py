@@ -826,8 +826,8 @@ async def get_cached_collectors(
         return await _retry_on_sqlite_lock(
             f"Look up collector cache for {project}", lookup
         )
-    except Exception as e:
-        LOG.debug(f"Collector cache lookup failed for {project}: {e}")
+    except Exception:
+        LOG.exception(f"Collector cache lookup failed for {project}")
         return None
 
 
@@ -920,6 +920,6 @@ async def store_collectors(
         )
 
         LOG.debug(f"Stored {len(collectors)} collectors in cache for {project}")
-    except Exception as e:
+    except Exception:
         # Log but don't fail if caching fails
-        LOG.warning(f"Failed to store collector cache for {project}: {e}")
+        LOG.exception(f"Failed to store collector cache for {project}")

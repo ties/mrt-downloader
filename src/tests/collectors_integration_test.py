@@ -10,6 +10,7 @@ from mrt_downloader.collectors import (
 )
 from mrt_downloader.http import build_session
 from mrt_downloader.models import CollectorInfo
+from tests.util import find_collector
 
 
 @pytest_asyncio.fixture
@@ -25,7 +26,7 @@ async def test_get_ripe_ris_collectors(session: aiohttp.ClientSession):
         collectors = await get_ripe_ris_collectors(sess)
 
         assert len(collectors) > 10
-        rrc00: CollectorInfo = [c for c in collectors if c.name == "RRC00"][0]
+        rrc00: CollectorInfo = find_collector(collectors, "RRC00")
 
         assert rrc00.name == "RRC00"
         assert rrc00.project == "ris"
@@ -34,7 +35,7 @@ async def test_get_ripe_ris_collectors(session: aiohttp.ClientSession):
         assert rrc00.removed is None
 
         # Now get a deactivated collector
-        deactivated_rrc: CollectorInfo = [c for c in collectors if c.name == "RRC02"][0]
+        deactivated_rrc: CollectorInfo = next(filter(lambda c: c.name == "RRC02", collectors))
         assert deactivated_rrc.removed == datetime(2008, 11, 1, tzinfo=UTC)
 
 
@@ -45,9 +46,9 @@ async def test_get_routeviews_collectors(session: aiohttp.ClientSession):
         collectors = await get_routeviews_collectors(sess)
 
         assert len(collectors) >= 50
-        routeviews8: CollectorInfo = [
+        routeviews8: CollectorInfo = next(
             c for c in collectors if c.name == "route-views8"
-        ][0]
+        )
 
         assert routeviews8.name == "route-views8"
         assert routeviews8.project == "routeviews"
