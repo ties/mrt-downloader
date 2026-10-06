@@ -5,6 +5,7 @@ from mrt_downloader.files import (
     ByMonthStrategy,
     ByYearMonthDayHourStrategy,
     ByYearMonthDayStrategy,
+    ByYearStrategy,
     PrefixCollectorByHourStrategy,
     PrefixCollectorStrategy,
     split_on_dash_except_route_views,
@@ -52,6 +53,38 @@ def test_collector_partitioned_yearmonth() -> None:
         "hour": "23",
         "minute": "45",
         "filename": "updates.20250714.2345.bz2",
+    }
+
+
+def test_collector_partitioned_year() -> None:
+    """Test parsing paths prefixed by collector, followed by year, then files in dir"""
+    chicago = [
+        Path("route-views.chicago"),
+        Path("2025"),
+        Path("updates.20250714.2345.bz2"),
+    ]
+    rio = [Path("route-views.rio"), Path("2025"), Path("updates.20250704.2345.bz2")]
+
+    strategy = ByCollectorPartitionedStategy(ByYearStrategy())
+
+    assert strategy.parse(chicago) == {
+        "collector": "route-views.chicago",
+        "year": "2025",
+        "month": "7",
+        "day": "14",
+        "hour": "23",
+        "minute": "45",
+        "filename": "updates.20250714.2345.bz2",
+    }
+
+    assert strategy.parse(rio) == {
+        "collector": "route-views.rio",
+        "year": "2025",
+        "month": "7",
+        "day": "4",
+        "hour": "23",
+        "minute": "45",
+        "filename": "updates.20250704.2345.bz2",
     }
 
 

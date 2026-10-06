@@ -24,6 +24,7 @@ def parse_standard_filename(filename: str) -> ParsedFilenameSegments:
     dt = parse_mrt_filename_date(filename)
     if dt:
         year = str(dt.year)
+        month = str(dt.month)
         day = str(dt.day)
         hour = str(dt.hour)
         minute = str(dt.minute)
@@ -85,6 +86,24 @@ class ByCollectorStrategy(FileNamingStrategy):
         return {
             "collector": str(path[0]),
             "filename": str(path[1]),
+        }
+
+
+class ByYearStrategy(FileNamingStrategy):
+    def get_path(self, path: pathlib.Path, entry: CollectorFileEntry) -> pathlib.Path:
+        return path / entry.date.strftime("%Y") / entry.filename
+
+    def parse(self, path: Sequence[str | pathlib.Path]) -> dict[str, str | None]:
+        year = str(path[0])
+        segments = parse_standard_filename(str(path[1]))
+
+        return {
+            "year": year,
+            "month": segments.month,
+            "filename": str(path[1]),
+            "day": segments.day,
+            "hour": segments.hour,
+            "minute": segments.minute,
         }
 
 

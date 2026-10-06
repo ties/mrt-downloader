@@ -18,6 +18,7 @@ from mrt_downloader.download import download_files, validate_existing_file_polic
 from mrt_downloader.files import (
     ByCollectorPartitionedStategy,
     ByMonthStrategy,
+    ByYearStrategy,
     PrefixCollectorByHourStrategy,
     PrefixCollectorStrategy,
 )
@@ -88,7 +89,7 @@ CLICK_DATETIME_TYPE = click.DateTime(
 )
 @click.option(
     "--partitioning",
-    type=click.Choice(["hour", "collector-month", "flat"]),
+    type=click.Choice(["hour", "collector-month", "collector-year", "flat"]),
     default="collector-month",
     help="Partitioning strategy for downloaded files: hour is one directory per hour (old --partition), collector-month is similar to structure on data.ris.ripe.net, flat is one directory (filename prefixed with the collector, followed by original name)",
 )
@@ -256,6 +257,14 @@ def cli(
                 )
             )
             naming_strategy = ByCollectorPartitionedStategy(ByMonthStrategy())
+        case "collector-year":
+            click.echo(
+                click.style(
+                    "Partitioning directories by collector and year", fg="green"
+                )
+            )
+            naming_strategy = ByCollectorPartitionedStategy(ByYearStrategy())
+
         case "flat":
             click.echo(
                 click.style(
