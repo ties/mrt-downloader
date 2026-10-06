@@ -8,7 +8,7 @@ import urllib.parse
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional, TypeVar
+from typing import TypeVar
 
 import aiosqlite
 
@@ -115,7 +115,7 @@ def _chunked(values: Sequence[T], size: int = SQL_PARAM_CHUNK) -> Iterator[Seque
         yield values[start : start + size]
 
 
-def _encode_file_type(file_type: Optional[str]) -> Optional[int]:
+def _encode_file_type(file_type: str | None) -> int | None:
     if file_type is None:
         return None
 
@@ -125,7 +125,7 @@ def _encode_file_type(file_type: Optional[str]) -> Optional[int]:
     return code
 
 
-def _url_suffix(index_url: str, entry: CollectorFileEntry) -> Optional[str]:
+def _url_suffix(index_url: str, entry: CollectorFileEntry) -> str | None:
     """Reduce a file URL to the part that cannot be derived from the index URL.
 
     A derived URL needs no suffix. Subdirectory links retain their relative tail,
@@ -141,7 +141,7 @@ def _url_suffix(index_url: str, entry: CollectorFileEntry) -> Optional[str]:
     return urllib.parse.urljoin(index_url, entry.url)
 
 
-def _file_url(index_url: str, filename: str, url_suffix: Optional[str]) -> str:
+def _file_url(index_url: str, filename: str, url_suffix: str | None) -> str:
     if url_suffix is None:
         return index_url + filename
 
@@ -235,7 +235,7 @@ async def _read_user_version(db) -> int:
         return int(row[0]) if row else 0
 
 
-async def init_cache_db(db_path: Optional[Path] = None) -> None:
+async def init_cache_db(db_path: Path | None = None) -> None:
     """Make sure the cache database holds the current schema.
 
     Rebuild mismatched schemas rather than migrating cached data. The
@@ -394,10 +394,10 @@ def should_refresh_index(month_end_date: datetime.datetime) -> bool:
     Returns:
         True if the index should be refreshed, False if cached version can be used
     """
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     # Make month_end_date timezone-aware if it isn't already
     if month_end_date.tzinfo is None:
-        month_end_date = month_end_date.replace(tzinfo=datetime.timezone.utc)
+        month_end_date = month_end_date.replace(tzinfo=datetime.UTC)
 
     # Check if this is the current month
     current_month = (now.year, now.month)
@@ -433,8 +433,8 @@ async def get_cached_index(
     url: str,
     month_end_date: datetime.datetime,
     force_refresh: bool = False,
-    db_path: Optional[Path] = None,
-) -> Optional[list[CollectorFileEntry]]:
+    db_path: Path | None = None,
+) -> list[CollectorFileEntry] | None:
     """Get cached file entries for an index if they exist and are still valid.
 
     Args:
@@ -460,7 +460,7 @@ async def get_cached_index(
 
     try:
 
-        async def lookup() -> Optional[list[CollectorFileEntry]]:
+        async def lookup() -> list[CollectorFileEntry] | None:
             async with _connect_cache_db(db_path) as db:
                 # Check if the index is in cache
                 async with db.execute(
@@ -473,7 +473,7 @@ async def get_cached_index(
 
                     index_id, downloaded_at = row
                     downloaded_at_str = datetime.datetime.fromtimestamp(
-                        downloaded_at, tz=datetime.timezone.utc
+                        downloaded_at, tz=datetime.UTC
                     ).strftime("%Y-%m-%d %H:%M:%S UTC")
                     LOG.info(
                         "Using cached index for %s (downloaded at %s)",
@@ -527,7 +527,7 @@ async def _store_index_once(
 ) -> None:
     await init_cache_db(db_path)
 
-    now = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+    now = int(datetime.datetime.now(datetime.UTC).timestamp())
     month_end_str = month_end_date.isoformat()
 
     # CollectorInfo is unhashable, so deduplicate by its database identity.
@@ -537,51 +537,46 @@ async def _store_index_once(
             (entry.collector.project, entry.collector.name), entry.collector
         )
 
-    async with _get_write_lock(db_path):
-        async with _connect_cache_db(db_path) as db:
-            await db.execute("BEGIN IMMEDIATE")
-            try:
-                collector_ids = {
-                    key: await _intern_collector(db, collector)
-                    for key, collector in collectors.items()
-                }
-                index_id = await _upsert_index(db, url, now, month_end_str)
+    async with _get_write_lock(db_path), _connect_cache_db(db_path) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            collector_ids = {
+                key: await _intern_collector(db, collector)
+                for key, collector in collectors.items()
+            }
+            index_id = await _upsert_index(db, url, now, month_end_str)
 
-                await db.execute(
-                    "DELETE FROM file_cache WHERE index_id = ?", (index_id,)
-                )
-                # INSERT OR REPLACE so a listing that repeats a link collapses it
-                # rather than failing the whole transaction on the primary key.
-                await db.executemany(
-                    """
+            await db.execute("DELETE FROM file_cache WHERE index_id = ?", (index_id,))
+            # INSERT OR REPLACE so a listing that repeats a link collapses it
+            # rather than failing the whole transaction on the primary key.
+            await db.executemany(
+                """
                     INSERT OR REPLACE INTO file_cache (
                         index_id, collector_id, filename, url_suffix, file_type
                     ) VALUES (?, ?, ?, ?, ?)
                     """,
-                    [
-                        (
-                            index_id,
-                            collector_ids[
-                                (entry.collector.project, entry.collector.name)
-                            ],
-                            entry.filename,
-                            _url_suffix(url, entry),
-                            _encode_file_type(entry.file_type),
-                        )
-                        for entry in file_entries
-                    ],
-                )
-                await db.commit()
-            except Exception:
-                await db.rollback()
-                raise
+                [
+                    (
+                        index_id,
+                        collector_ids[(entry.collector.project, entry.collector.name)],
+                        entry.filename,
+                        _url_suffix(url, entry),
+                        _encode_file_type(entry.file_type),
+                    )
+                    for entry in file_entries
+                ],
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
 
 
 async def store_index(
     url: str,
     file_entries: list[CollectorFileEntry],
     month_end_date: datetime.datetime,
-    db_path: Optional[Path] = None,
+    db_path: Path | None = None,
 ) -> None:
     """Store parsed file entries for an index in the cache.
 
@@ -609,7 +604,7 @@ async def store_index(
 async def get_cached_indexes_batch(
     urls_with_dates: list[tuple[str, datetime.datetime]],
     force_refresh: bool = False,
-    db_path: Optional[Path] = None,
+    db_path: Path | None = None,
 ) -> dict[str, list[CollectorFileEntry]]:
     """Get cached file entries for multiple indexes in a single batch operation.
 
@@ -713,10 +708,10 @@ async def get_cached_indexes_batch(
                 )
 
                 # Log individual index times
-                for url in result.keys():
+                for url in result:
                     if url in downloaded_times:
                         downloaded_at_str = datetime.datetime.fromtimestamp(
-                            downloaded_times[url], tz=datetime.timezone.utc
+                            downloaded_times[url], tz=datetime.UTC
                         ).strftime("%Y-%m-%d %H:%M:%S UTC")
                         LOG.debug(
                             f"Using cached index for {url} (downloaded at {downloaded_at_str})"
@@ -742,17 +737,17 @@ def get_month_end_date(year: int, month: int) -> datetime.datetime:
     """
     # Get first day of next month, then subtract one second
     if month == 12:
-        next_month = datetime.datetime(year + 1, 1, 1, tzinfo=datetime.timezone.utc)
+        next_month = datetime.datetime(year + 1, 1, 1, tzinfo=datetime.UTC)
     else:
-        next_month = datetime.datetime(year, month + 1, 1, tzinfo=datetime.timezone.utc)
+        next_month = datetime.datetime(year, month + 1, 1, tzinfo=datetime.UTC)
 
     last_moment = next_month - datetime.timedelta(seconds=1)
     return last_moment
 
 
 async def get_cached_collectors(
-    project: str, force_refresh: bool = False, db_path: Optional[Path] = None
-) -> Optional[list[CollectorInfo]]:
+    project: str, force_refresh: bool = False, db_path: Path | None = None
+) -> list[CollectorInfo] | None:
     """Get cached collectors for a project if they exist and are still valid.
 
     Args:
@@ -772,7 +767,7 @@ async def get_cached_collectors(
 
     try:
 
-        async def lookup() -> Optional[list[CollectorInfo]]:
+        async def lookup() -> list[CollectorInfo] | None:
             async with _connect_cache_db(db_path) as db:
                 # Exclude collectors known only through an index.
                 async with db.execute(
@@ -791,7 +786,7 @@ async def get_cached_collectors(
                         return None
 
                     # Check if cache is still fresh (any stale entry invalidates the whole cache)
-                    now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+                    now = datetime.datetime.now(datetime.UTC).timestamp()
                     collectors = []
 
                     for row in rows:
@@ -821,7 +816,7 @@ async def get_cached_collectors(
                     # Format the cached_at timestamp from the first collector for display
                     if collectors:
                         cached_at_str = datetime.datetime.fromtimestamp(
-                            cached_at, tz=datetime.timezone.utc
+                            cached_at, tz=datetime.UTC
                         ).strftime("%Y-%m-%d %H:%M:%S UTC")
                         LOG.info(
                             f"Using {len(collectors)} cached collectors for {project} (cached at {cached_at_str})"
@@ -850,7 +845,7 @@ async def _store_collectors_once(
 
     await init_cache_db(db_path)
 
-    now = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+    now = int(datetime.datetime.now(datetime.UTC).timestamp())
     collector_rows = [
         (
             project,
@@ -864,23 +859,22 @@ async def _store_collectors_once(
         for position, collector in enumerate(collectors)
     ]
 
-    async with _get_write_lock(db_path):
-        async with _connect_cache_db(db_path) as db:
-            await db.execute("BEGIN IMMEDIATE")
-            try:
-                # Retire the previous listing, then re-stamp whatever is still
-                # in it. Marking first rather than comparing timestamps keeps
-                # this correct when two refreshes land in the same second.
-                await db.execute(
-                    """
+    async with _get_write_lock(db_path), _connect_cache_db(db_path) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            # Retire the previous listing, then re-stamp whatever is still
+            # in it. Marking first rather than comparing timestamps keeps
+            # this correct when two refreshes land in the same second.
+            await db.execute(
+                """
                     UPDATE collector
                     SET cached_at = NULL, list_position = NULL
                     WHERE project = ?
                     """,
-                    (project,),
-                )
-                await db.executemany(
-                    """
+                (project,),
+            )
+            await db.executemany(
+                """
                     INSERT INTO collector (
                         project, name, base_url, installed, removed,
                         cached_at, list_position
@@ -892,22 +886,22 @@ async def _store_collectors_once(
                         cached_at     = excluded.cached_at,
                         list_position = excluded.list_position
                     """,
-                    collector_rows,
-                )
-                # Delete only collectors not re-stamped by the upsert; replacing
-                # the whole project would cascade-delete every cached file entry.
-                await db.execute(
-                    "DELETE FROM collector WHERE project = ? AND cached_at IS NULL",
-                    (project,),
-                )
-                await db.commit()
-            except Exception:
-                await db.rollback()
-                raise
+                collector_rows,
+            )
+            # Delete only collectors not re-stamped by the upsert; replacing
+            # the whole project would cascade-delete every cached file entry.
+            await db.execute(
+                "DELETE FROM collector WHERE project = ? AND cached_at IS NULL",
+                (project,),
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
 
 
 async def store_collectors(
-    project: str, collectors: list[CollectorInfo], db_path: Optional[Path] = None
+    project: str, collectors: list[CollectorInfo], db_path: Path | None = None
 ) -> None:
     """Store collectors in the cache.
 

@@ -12,7 +12,7 @@ BKNIX = CollectorInfo(
     name="route-views.bknix",
     project="routeviews",
     base_url="https://archive.routeviews.org/route-views.bknix/bgpdata/",
-    installed=datetime.datetime(2019, 10, 29, 0, 0, tzinfo=datetime.timezone.utc),
+    installed=datetime.datetime(2019, 10, 29, 0, 0, tzinfo=datetime.UTC),
     removed=None,
 )
 

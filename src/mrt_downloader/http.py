@@ -8,10 +8,11 @@ import tempfile
 import time
 import warnings
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Iterable, Literal, Sequence, TypeVar
+from typing import Any, Literal, TypeVar
 
 import aiohttp
 import click
@@ -173,7 +174,7 @@ class RetryHelper:
             )
             try:
                 return await operation(attempt_url)
-            except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError) as e:
+            except (TimeoutError, aiohttp.ClientError, ConnectionError) as e:
                 last_exception = e
 
                 if isinstance(e, aiohttp.ClientResponseError) and 400 <= e.status < 500:
@@ -213,7 +214,7 @@ class RetryHelper:
                     LOG.error(error_message)
             except Exception as e:
                 # Don't retry on unexpected errors
-                LOG.error(f"{operation_name} failed with unexpected error: {repr(e)}")
+                LOG.error(f"{operation_name} failed with unexpected error: {e!r}")
                 raise
 
         # This should only happen if all retries failed
@@ -586,7 +587,7 @@ class DownloadWorker:
                 osdf_urls.extend(
                     parse_duplicate_link_urls(_header_values(response.headers, "Link"))
                 )
-        except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError) as e:
+        except (TimeoutError, aiohttp.ClientError, ConnectionError) as e:
             LOG.debug(
                 "Failed to discover OSDF alternatives for %s: %s",
                 plan.osdf_director_url,
