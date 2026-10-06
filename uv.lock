@@ -252,7 +252,7 @@ wheels = [
 
 [[package]]
 name = "mrt-downloader"
-version = "0.18.1"
+version = "0.19.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
