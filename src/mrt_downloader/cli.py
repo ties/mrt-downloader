@@ -8,9 +8,8 @@ import logging
 import multiprocessing
 import os
 import sys
-import warnings
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 import click
 
@@ -48,37 +47,15 @@ CLICK_DATETIME_TYPE = click.DateTime(
 @click.option(
     "--create-target", is_flag=True, default=False, help="Create target directory"
 )
-@click.option(
-    "--partition-directories",
-    is_flag=True,
-    default=False,
-    help="Partition directories by [year]/[month]/[day]/[hour] (deprecated)",
-    deprecated=True,
-)
 @click.option("--verbose", is_flag=True, help="Enable verbose logging")
-@click.option(
-    "--bview-only",
-    is_flag=True,
-    help="Download bview files only (use --rib-only)",
-    deprecated=True,
-)
 @click.option("--rib-only", is_flag=True, help="Download full RIB files only.")
 @click.option("--update-only", is_flag=True, help="Download update files only")
-@click.option(
-    "--rrc",
-    type=str,
-    multiple=True,
-    default=[],
-    help="RRC (number) to download from (e.g. 1 for rrc01) - use --collector",
-    deprecated=True,
-)
 @click.option(
     "--collector",
     type=str,
     multiple=True,
     default=[],
     help="collectors to download from (e.g. rrc00, ...)",
-    deprecated=False,
 )
 @click.option(
     "--project",
@@ -128,14 +105,11 @@ def cli(
     end_time: datetime.datetime,
     verbose: bool,
     update_only: bool,
+    rib_only: bool,
+    collector: list[str],
     num_threads: int,
-    partition_directories: bool,
     project: list[Literal["ris", "routeviews"]],
     partitioning: Literal["hour", "collector-month", "flat"] = "collector-month",
-    collector: list[str] | None = None,
-    rrc: Optional[list[str]] = None,
-    rib_only: bool | None = None,
-    bview_only: bool | None = None,
     force_cache_refresh: bool = False,
     routeviews_mirror_strategy: RouteviewsMirrorStrategyName = (
         DEFAULT_ROUTEVIEWS_MIRROR_STRATEGY
@@ -145,42 +119,6 @@ def cli(
     """
     Download a set of BGP updates from RIS.
     """
-    if rrc and collector:
-        click.echo(
-            click.style(
-                "Cannot specify both --rrc and --collector. Please use --collector.",
-                fg="red",
-            )
-        )
-        sys.exit(1)
-
-    if rrc:
-        warnings.warn(
-            "--rrc is deprecated. Please use --collector instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        click.echo(
-            click.style(
-                "Warning: --rrc is deprecated. This will be deprecated on/after 1-9-20205. Please use --collector instead.",
-                fg="yellow",
-            )
-        )
-
-    if bview_only:
-        warnings.warn("--bview-only is deprecated.", DeprecationWarning, stacklevel=2)
-        click.echo(
-            click.style(
-                "Warning: --bview-only is deprecated. This will be deprecated on/after 1-9-20205. Please use ---only instead.",
-                fg="yellow",
-            )
-        )
-
-    effective_rib_only = bool(rib_only or bview_only)
-    effective_collectors = (
-        collector if collector else [f"rrc{x:02}" for x in rrc] if rrc else []
-    )
-
     if not target_dir.exists():
         if create_target:
             # Make directory if needed
@@ -200,7 +138,7 @@ def cli(
     else:
         logging.getLogger().setLevel(logging.INFO)
 
-    if update_only and effective_rib_only:
+    if update_only and rib_only:
         click.echo(
             click.style(
                 "Cannot specify both --update-only and --rib-only/--bview-only",
@@ -226,25 +164,7 @@ def cli(
         )
     )
 
-    if partitioning and partition_directories:
-        click.echo(
-            click.style(
-                "Cannot specify both --partitioning and --partition-directories",
-                fg="red",
-            )
-        )
-        sys.exit(1)
-
     naming_strategy = PrefixCollectorStrategy()
-
-    if partition_directories:
-        click.echo(
-            click.style(
-                "Partitioning directories by hour (deprecated, use --partitioning=hour)",
-                fg="yellow",
-            )
-        )
-        naming_strategy = PrefixCollectorByHourStrategy()
 
     match partitioning:
         case "hour":
@@ -278,9 +198,9 @@ def cli(
             target_dir,
             start_time.replace(tzinfo=datetime.UTC),
             end_time.replace(tzinfo=datetime.UTC),
-            rib_only=effective_rib_only,
+            rib_only=rib_only,
             update_only=update_only,
-            collectors=effective_collectors,
+            collectors=collector,
             num_workers=num_threads,
             naming_strategy=naming_strategy,
             project=frozenset(project),
