@@ -1,7 +1,8 @@
-## v0.18.1
+## v0.19.0
 
   * Add by year partitioning strategy (e.g. `rrc21/2019/updates.20190131.0435.gz`)
   * Add `--partitioning=collector-year` to the CLI
+  * **Breaking**: day/month strings from partitioning parsers are no longer zero padded
 
 ## v0.18.0
 
