@@ -8,7 +8,6 @@ import urllib.parse
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TypeVar
 
 import aiosqlite
 
@@ -16,7 +15,6 @@ from mrt_downloader.models import CollectorFileEntry, CollectorInfo
 from mrt_downloader.url_utils import is_absolute_http_url
 
 LOG = logging.getLogger(__name__)
-T = TypeVar("T")
 
 # Cache refresh threshold: only refresh indexes for months that ended less than this many seconds ago
 # Default: 7 days = 7 * 24 * 60 * 60 seconds
@@ -110,7 +108,9 @@ async def _drop_all_objects(db) -> bool:
     return bool(objects)
 
 
-def _chunked(values: Sequence[T], size: int = SQL_PARAM_CHUNK) -> Iterator[Sequence[T]]:
+def _chunked[T](
+    values: Sequence[T], size: int = SQL_PARAM_CHUNK
+) -> Iterator[Sequence[T]]:
     for start in range(0, len(values), size):
         yield values[start : start + size]
 
@@ -184,7 +184,7 @@ def _is_sqlite_locked(exc: Exception) -> bool:
     return "database is locked" in message or "database table is locked" in message
 
 
-async def _retry_on_sqlite_lock(
+async def _retry_on_sqlite_lock[T](
     operation_name: str, operation: Callable[[], Awaitable[T]]
 ) -> T:
     last_exception: Exception | None = None
@@ -779,7 +779,7 @@ async def get_cached_collectors(
                     ORDER BY list_position
                     """,
                     (project,),
-                ) as cursor
+                ) as cursor,
             ):
                 rows = await cursor.fetchall()
 
