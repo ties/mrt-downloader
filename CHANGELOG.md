@@ -1,3 +1,8 @@
+## v0.18.1
+
+  * Add by year partitioning strategy (e.g. `rrc21/2019/updates.20190131.0435.gz`)
+  * Add `--partitioning=collector-year` to the CLI
+
 ## v0.18.0
 
   * Normalised the SQLite index cache. Collectors are stored once and referenced
