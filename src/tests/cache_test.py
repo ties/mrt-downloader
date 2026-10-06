@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-import mrt_downloader.cache as cache
+from mrt_downloader import cache
 from mrt_downloader.cache import (
     get_cached_collectors,
     get_cached_index,
@@ -24,7 +24,7 @@ from mrt_downloader.models import CollectorFileEntry, CollectorInfo
 
 # A month that ended long ago, so should_refresh_index() never overrides the
 # cache in tests that are checking what was stored.
-OLD_MONTH_END = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
+OLD_MONTH_END = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.UTC)
 
 
 def make_test_collector(name: str = "RRC00") -> CollectorInfo:
@@ -32,7 +32,7 @@ def make_test_collector(name: str = "RRC00") -> CollectorInfo:
         name=name,
         project="ris",
         base_url=f"https://data.ris.ripe.net/{name.lower()}/",
-        installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
+        installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.UTC),
         removed=None,
     )
 
@@ -251,16 +251,14 @@ async def test_store_and_retrieve_index():
 
         url = "https://example.com/2023.01/"
         # Use an old month that won't be refreshed
-        month_end_date = datetime.datetime(
-            2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc
-        )
+        month_end_date = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.UTC)
 
         # Create test data
         collector = CollectorInfo(
             name="RRC00",
             project="ris",
             base_url="https://data.ris.ripe.net/rrc00/",
-            installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
+            installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.UTC),
             removed=None,
         )
 
@@ -311,9 +309,7 @@ async def test_cache_miss():
         await init_cache_db(db_path)
 
         url = "https://example.com/2023.01/"
-        month_end_date = datetime.datetime(
-            2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc
-        )
+        month_end_date = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.UTC)
 
         # Try to retrieve without storing
         cached_entries = await get_cached_index(url, month_end_date, db_path=db_path)
@@ -329,7 +325,7 @@ async def test_recent_month_not_cached():
 
         url = "https://example.com/2025.11/"
         # Use the current month (which is recent)
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
         month_end_date = get_month_end_date(now.year, now.month)
 
         # Create test data
@@ -337,7 +333,7 @@ async def test_recent_month_not_cached():
             name="RRC00",
             project="ris",
             base_url="https://data.ris.ripe.net/rrc00/",
-            installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
+            installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.UTC),
             removed=None,
         )
 
@@ -360,7 +356,7 @@ async def test_recent_month_not_cached():
 
 def test_should_refresh_index_current_month():
     """Test that the current month should always be refreshed."""
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     # Get the end of the current month
     current_month_end = get_month_end_date(now.year, now.month)
     assert should_refresh_index(current_month_end) is True
@@ -368,7 +364,7 @@ def test_should_refresh_index_current_month():
 
 def test_should_refresh_index_recent():
     """Test that recent months (ended <7 days ago) should be refreshed."""
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     # A month that ended 3 days ago (less than 7 days)
     recent_end = now - datetime.timedelta(days=3)
     assert should_refresh_index(recent_end) is True
@@ -376,7 +372,7 @@ def test_should_refresh_index_recent():
 
 def test_should_refresh_index_old():
     """Test that old months should not be refreshed."""
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     # A month that ended 30 days ago (more than 7 days)
     old_end = now - datetime.timedelta(days=30)
     assert should_refresh_index(old_end) is False
@@ -416,16 +412,14 @@ async def test_auto_init_on_store():
         # Don't call init_cache_db
 
         url = "https://example.com/2023.01/"
-        month_end_date = datetime.datetime(
-            2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc
-        )
+        month_end_date = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.UTC)
 
         # Create test data
         collector = CollectorInfo(
             name="RRC00",
             project="ris",
             base_url="https://data.ris.ripe.net/rrc00/",
-            installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
+            installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.UTC),
             removed=None,
         )
 
@@ -462,14 +456,14 @@ async def test_store_and_retrieve_collectors():
                 name="RRC00",
                 project="ris",
                 base_url="https://data.ris.ripe.net/rrc00/",
-                installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
+                installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.UTC),
                 removed=None,
             ),
             CollectorInfo(
                 name="RRC01",
                 project="ris",
                 base_url="https://data.ris.ripe.net/rrc01/",
-                installed=datetime.datetime(2001, 5, 1, tzinfo=datetime.timezone.utc),
+                installed=datetime.datetime(2001, 5, 1, tzinfo=datetime.UTC),
                 removed=None,
             ),
         ]
@@ -494,8 +488,8 @@ async def test_store_and_retrieve_routeviews_activity_cutoff():
             name="route-views.jinx",
             project="routeviews",
             base_url="https://archive.routeviews.org/route-views.jinx/bgpdata/",
-            installed=datetime.datetime(2017, 1, 1, tzinfo=datetime.timezone.utc),
-            removed=datetime.datetime(2019, 9, 15, 2, 15, tzinfo=datetime.timezone.utc),
+            installed=datetime.datetime(2017, 1, 1, tzinfo=datetime.UTC),
+            removed=datetime.datetime(2019, 9, 15, 2, 15, tzinfo=datetime.UTC),
         )
 
         await store_collectors("routeviews", [collector], db_path)
@@ -529,7 +523,7 @@ async def test_collector_force_refresh():
                 name="RRC00",
                 project="ris",
                 base_url="https://data.ris.ripe.net/rrc00/",
-                installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
+                installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.UTC),
                 removed=None,
             ),
         ]
@@ -556,15 +550,13 @@ async def test_index_force_refresh():
         await init_cache_db(db_path)
 
         url = "https://example.com/2023.01/"
-        month_end_date = datetime.datetime(
-            2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc
-        )
+        month_end_date = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.UTC)
 
         collector = CollectorInfo(
             name="RRC00",
             project="ris",
             base_url="https://data.ris.ripe.net/rrc00/",
-            installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.timezone.utc),
+            installed=datetime.datetime(2001, 1, 1, tzinfo=datetime.UTC),
             removed=None,
         )
 
@@ -596,9 +588,7 @@ async def test_concurrent_store_index_calls_are_serialized():
     """Test that concurrent cache writes do not fail with database lock errors."""
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "test.db"
-        month_end_date = datetime.datetime(
-            2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc
-        )
+        month_end_date = datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.UTC)
 
         async def store_one(index_number: int) -> None:
             await store_index(
@@ -637,7 +627,7 @@ async def test_store_index_retries_when_database_is_temporarily_locked(monkeypat
             lock_conn.execute("BEGIN IMMEDIATE")
 
             month_end_date = datetime.datetime(
-                2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc
+                2023, 1, 31, 23, 59, 59, tzinfo=datetime.UTC
             )
             task = asyncio.create_task(
                 store_index(
@@ -682,9 +672,7 @@ async def test_store_index_does_not_raise_when_database_stays_locked(
             await store_index(
                 "https://example.com/2023.01/locked/",
                 make_test_file_entries(1),
-                datetime.datetime(
-                    2023, 1, 31, 23, 59, 59, tzinfo=datetime.timezone.utc
-                ),
+                datetime.datetime(2023, 1, 31, 23, 59, 59, tzinfo=datetime.UTC),
                 db_path,
             )
         finally:

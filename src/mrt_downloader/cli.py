@@ -27,7 +27,7 @@ from mrt_downloader.mirrors import (
 )
 from mrt_downloader.models import ExistingFilePolicy
 
-LOG = logging.getLogger(__name__)  #
+LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 

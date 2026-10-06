@@ -3,8 +3,8 @@ import logging
 import os
 import urllib
 import urllib.parse
+from collections.abc import Iterable
 from html.parser import HTMLParser
-from typing import Iterable
 
 import aiohttp
 import click
