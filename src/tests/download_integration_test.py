@@ -11,9 +11,9 @@ from mrt_downloader.files import PrefixCollectorStrategy
 @pytest.mark.asyncio
 async def test_mrt_download(tmp_path: pathlib.Path) -> None:
     # Download a limited number of files
-    yesterday_midnight = (datetime.datetime.now(tz=datetime.UTC) - datetime.timedelta(days=1)).replace(
-        hour=0, minute=0, second=0, microsecond=0, tzinfo=datetime.UTC
-    )
+    yesterday_midnight = (
+        datetime.datetime.now(tz=datetime.UTC) - datetime.timedelta(days=1)
+    ).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=datetime.UTC)
     yesterday_one_am = yesterday_midnight.replace(hour=1)
 
     print(f"Download window: {yesterday_midnight} - {yesterday_one_am}")

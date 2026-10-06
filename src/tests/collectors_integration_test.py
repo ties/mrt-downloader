@@ -35,7 +35,7 @@ async def test_get_ripe_ris_collectors(session: aiohttp.ClientSession):
         assert rrc00.removed is None
 
         # Now get a deactivated collector
-        deactivated_rrc: CollectorInfo = next(filter(lambda c: c.name == "RRC02", collectors))
+        deactivated_rrc: CollectorInfo = find_collector(collectors, "RRC02")
         assert deactivated_rrc.removed == datetime(2008, 11, 1, tzinfo=UTC)
 
 
@@ -46,9 +46,7 @@ async def test_get_routeviews_collectors(session: aiohttp.ClientSession):
         collectors = await get_routeviews_collectors(sess)
 
         assert len(collectors) >= 50
-        routeviews8: CollectorInfo = next(
-            c for c in collectors if c.name == "route-views8"
-        )
+        routeviews8: CollectorInfo = find_collector(collectors, "route-views8")
 
         assert routeviews8.name == "route-views8"
         assert routeviews8.project == "routeviews"

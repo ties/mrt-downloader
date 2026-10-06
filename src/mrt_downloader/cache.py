@@ -768,9 +768,10 @@ async def get_cached_collectors(
     try:
 
         async def lookup() -> list[CollectorInfo] | None:
-            async with _connect_cache_db(db_path) as db:
+            async with (
+                _connect_cache_db(db_path) as db,
                 # Exclude collectors known only through an index.
-                async with db.execute(
+                db.execute(
                     """
                     SELECT name, base_url, installed, removed, cached_at
                     FROM collector
@@ -778,50 +779,51 @@ async def get_cached_collectors(
                     ORDER BY list_position
                     """,
                     (project,),
-                ) as cursor:
-                    rows = await cursor.fetchall()
+                ) as cursor
+            ):
+                rows = await cursor.fetchall()
 
-                    if not rows:
-                        LOG.debug(f"No cached collectors found for {project}")
+                if not rows:
+                    LOG.debug(f"No cached collectors found for {project}")
+                    return None
+
+                # Check if cache is still fresh (any stale entry invalidates the whole cache)
+                now = datetime.datetime.now(datetime.UTC).timestamp()
+                collectors = []
+
+                for row in rows:
+                    name, base_url, installed_str, removed_str, cached_at = row
+
+                    # Check if this entry is stale
+                    age = now - cached_at
+                    if age > COLLECTOR_CACHE_REFRESH_THRESHOLD_SECONDS:
+                        LOG.debug(
+                            f"Collector cache for {project} is stale "
+                            f"(age: {age:.0f}s > {COLLECTOR_CACHE_REFRESH_THRESHOLD_SECONDS}s)"
+                        )
                         return None
 
-                    # Check if cache is still fresh (any stale entry invalidates the whole cache)
-                    now = datetime.datetime.now(datetime.UTC).timestamp()
-                    collectors = []
+                    # Reconstruct CollectorInfo
+                    collector = CollectorInfo(
+                        name=name,
+                        project=project,
+                        base_url=base_url,
+                        installed=datetime.datetime.fromisoformat(installed_str),
+                        removed=datetime.datetime.fromisoformat(removed_str)
+                        if removed_str
+                        else None,
+                    )
+                    collectors.append(collector)
 
-                    for row in rows:
-                        name, base_url, installed_str, removed_str, cached_at = row
-
-                        # Check if this entry is stale
-                        age = now - cached_at
-                        if age > COLLECTOR_CACHE_REFRESH_THRESHOLD_SECONDS:
-                            LOG.debug(
-                                f"Collector cache for {project} is stale "
-                                f"(age: {age:.0f}s > {COLLECTOR_CACHE_REFRESH_THRESHOLD_SECONDS}s)"
-                            )
-                            return None
-
-                        # Reconstruct CollectorInfo
-                        collector = CollectorInfo(
-                            name=name,
-                            project=project,
-                            base_url=base_url,
-                            installed=datetime.datetime.fromisoformat(installed_str),
-                            removed=datetime.datetime.fromisoformat(removed_str)
-                            if removed_str
-                            else None,
-                        )
-                        collectors.append(collector)
-
-                    # Format the cached_at timestamp from the first collector for display
-                    if collectors:
-                        cached_at_str = datetime.datetime.fromtimestamp(
-                            cached_at, tz=datetime.UTC
-                        ).strftime("%Y-%m-%d %H:%M:%S UTC")
-                        LOG.info(
-                            f"Using {len(collectors)} cached collectors for {project} (cached at {cached_at_str})"
-                        )
-                    return collectors
+                # Format the cached_at timestamp from the first collector for display
+                if collectors:
+                    cached_at_str = datetime.datetime.fromtimestamp(
+                        cached_at, tz=datetime.UTC
+                    ).strftime("%Y-%m-%d %H:%M:%S UTC")
+                    LOG.info(
+                        f"Using {len(collectors)} cached collectors for {project} (cached at {cached_at_str})"
+                    )
+                return collectors
 
         return await _retry_on_sqlite_lock(
             f"Look up collector cache for {project}", lookup

@@ -145,7 +145,9 @@ def test_index_files_for_collector_routeviews(
 def test_index_files_for_routeviews_includes_first_partial_month(
     routeviews_collectors: list[CollectorInfo],
 ) -> None:
-    routeviews8 = next(filter(lambda c: c.name == "route-views8", routeviews_collectors))
+    routeviews8 = next(
+        filter(lambda c: c.name == "route-views8", routeviews_collectors)
+    )
 
     index_files = index_files_for_collector(
         routeviews8,
